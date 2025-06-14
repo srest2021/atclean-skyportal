@@ -352,7 +352,7 @@ class AtlasLightCurveDownloader:
         result = self.download_lc(coords, lookbacktime=lookbacktime, max_mjd=max_mjd)
 
         lc = LightCurve(control_index, coords, verbose=self.logger.verbose)
-        lc.set_and_preprocess_df(result, flux2mag_sigmalimit=flux2mag_sigmalimit)
+        lc.set_and_preprocess(result, flux2mag_sigmalimit=flux2mag_sigmalimit)
         return lc
 
     def download(
