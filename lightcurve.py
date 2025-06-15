@@ -1,11 +1,11 @@
 #!/usr/bin/env python
 
 from copy import deepcopy
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
-from pdastro import AnotB, AorB, pdastrostatsclass
+from pdastro import AandB, AnotB, AorB, pdastrostatsclass
 from utils import (
     BinnedColumnNames,
     CleanedColumnNames,
@@ -13,6 +13,7 @@ from utils import (
     Coordinates,
     CustomLogger,
     Cut,
+    UncertaintyEstimation,
 )
 
 
@@ -117,6 +118,17 @@ class BaseLightCurve(pdastrostatsclass):
         percent_cut = 100 * len(cut_ix) / len(all_ix)
         return percent_cut
 
+    def get_stdev_flux(self, indices=None):
+        self.calcaverage_sigmacutloop(
+            self.colnames.flux, indices=indices, Nsigma=3.0, median_firstiteration=True
+        )
+        return self.statparams["stdev"]
+
+    def get_median_dflux(self, indices=None):
+        if indices is None:
+            indices = self.getindices()
+        return np.nanmedian(self.t.loc[indices, self.colnames.dflux])
+
 
 class LightCurve(BaseLightCurve):
     def __init__(self, control_index: int, coords: Coordinates, verbose: bool = False):
@@ -130,8 +142,9 @@ class LightCurve(BaseLightCurve):
         self._preprocess(flux2mag_sigmalimit=flux2mag_sigmalimit)
 
     def _preprocess(self, flux2mag_sigmalimit=3.0):
-        # create mask column
-        self.t[self.colnames.mask] = 0
+        if self.colnames.mask not in self.t:
+            # create mask column
+            self.t[self.colnames.mask] = 0
 
         # sort by mjd
         self.t = self.t.sort_values(by=["MJD"], ignore_index=True)
@@ -156,10 +169,16 @@ class LightCurve(BaseLightCurve):
         if "__tmp_SN" in self.t.columns:
             self.t.drop(columns=["__tmp_SN"], inplace=True)
 
+    def add_noise_to_dflux(self, sigma_extra):
+        # new_dflux_colname = f"{self.colnames.dflux}_new"
+        self.t[self.colnames.dflux] = np.sqrt(
+            self.t[self.colnames.dflux] * self.t[self.colnames.dflux] + sigma_extra**2
+        )
+        # self.colnames.update("dflux_new", new_dflux_colname)
+        # self.calculate_fdf_column()
+
     def postprocess(self):
         # convert column names
-        if not self.colnames.required.issubset(set(self.t.columns)):
-            raise ValueError("Missing expected column")
         update_cols_dict = {
             self.colnames.mjd: "mjd",
             self.colnames.ra: "ra",
@@ -171,14 +190,17 @@ class LightCurve(BaseLightCurve):
             self.colnames.limiting_mag: "limiting_mag",
             self.colnames.filter: "filter",
         }
+        desired_cols = set(update_cols_dict.values())
         self.t.rename(
             columns=update_cols_dict,
             inplace=True,
         )
         self.colnames.update_many(update_cols_dict)
+        if not desired_cols.issubset(set(self.t.columns)):
+            raise ValueError("Missing expected column")
 
         # drop unnecessary columns
-        drop_columns = list(set(self.t.columns.values) - self.colnames.required)
+        drop_columns = list(set(self.t.columns.values) - desired_cols)
         self.t.drop(columns=drop_columns, inplace=True)
 
         # replace 'o' -> 'atlaso' and 'c' -> 'atlasc'
@@ -196,3 +218,177 @@ class LightCurve(BaseLightCurve):
 class BinnedLightCurve(BaseLightCurve):
     def __init__(self, control_index: int, verbose: bool = False):
         super().__init__(control_index, BinnedColumnNames(), verbose=verbose)
+
+
+class BaseTransient:
+    def __init__(self, verbose: bool = False):
+        self.lcs: Dict[int, BaseLightCurve] = {}
+        self.logger = CustomLogger(verbose=verbose)
+
+    def get(self, control_index: int) -> BaseLightCurve:
+        if control_index not in self.lcs:
+            raise ValueError(
+                f"Light curve with control index {control_index} does not exist"
+            )
+        return self.lcs[control_index]
+
+    def get_sn(self) -> BaseLightCurve:
+        return self.get(0)
+
+    @property
+    def colnames(self):
+        return self.get_sn().colnames
+
+    @property
+    def num_controls(self):
+        return len(self.lcs)
+
+    @property
+    def lc_indices(self) -> List[int]:
+        return list(self.lcs.keys())
+
+    @property
+    def control_lc_indices(self) -> List[int]:
+        return [i for i in self.lc_indices if i != 0]
+
+    def add(self, lc: BaseLightCurve):
+        if lc.control_index in self.lcs:
+            self.logger.warning(
+                f"Control index {lc.control_index} already exists; overwriting..."
+            )
+        self.lcs[lc.control_index] = deepcopy(lc)
+
+    def iterator(self):
+        for i in self.lcs:
+            yield self.lcs[i]
+
+    def apply_cut(self, cut: Cut):
+        if not cut.can_apply_directly():
+            raise ValueError(f"Cannot apply this cut directly: {cut.name()}")
+
+        for i in self.lcs:
+            self.get(i).apply_cut(cut)
+
+
+class Transient(BaseTransient):
+    def __init__(self, verbose: bool = False):
+        super().__init__(verbose=verbose)
+        self.lcs: Dict[int, LightCurve] = {}
+
+    def match_control_mjds(self):
+        """Make sure all control light curve MJDs exactly match SN MJDs"""
+        self.logger.info("Making sure SN and control light curve MJDs match up exactly")
+        if self.num_controls == 0:
+            return
+
+        self.get_sn().t.sort_values(
+            by=[self.colnames.mjd], ignore_index=True, inplace=True
+        )
+        sn_sorted_mjd = self.get_sn().t[self.colnames.mjd].to_numpy()
+
+        for i in self.lcs:
+            # sort by MJD
+            self.get(i).t.sort_values(
+                by=[self.colnames.mjd], ignore_index=True, inplace=True
+            )
+            control_sorted_mjd = self.get(i).t[self.colnames.mjd].to_numpy()
+
+            if (len(sn_sorted_mjd) != len(control_sorted_mjd)) or not np.array_equal(
+                sn_sorted_mjd, control_sorted_mjd
+            ):
+                self.logger.warning(
+                    f"MJDs out of agreement for control light curve {i}; fixing...",
+                )
+
+                only_sn_mjd = AnotB(sn_sorted_mjd, control_sorted_mjd)
+                only_control_mjd = AnotB(control_sorted_mjd, sn_sorted_mjd)
+
+                # for the MJDs only in SN, add row with that MJD to control light curve,
+                # with all values of other columns NaN
+                if len(only_sn_mjd) > 0:
+                    for mjd in only_sn_mjd:
+                        self.get(i).newrow(
+                            {
+                                self.colnames.mjd: mjd,
+                                self.colnames.mask: 0,
+                            }
+                        )
+
+                # remove indices of rows in control light curve for which there is no MJD in the SN lc
+                if len(only_control_mjd) > 0:
+                    ix_to_skip = []
+                    for mjd in only_control_mjd:
+                        matching_ix = self.get(i).ix_equal(self.colnames.mjd, mjd)
+                        if len(matching_ix) != 1:
+                            raise RuntimeError(
+                                f"Couldn't find MJD={mjd} in MJD column, but should be there!"
+                            )
+                        ix_to_skip.extend(matching_ix)
+                    ix = AnotB(self.get(i).getindices(), ix_to_skip)
+                else:
+                    ix = self.get(i).getindices()
+
+                # sort again
+                sorted_ix = self.get(i).ix_sort_by_cols(self.colnames.mjd, indices=ix)
+                self.get(i).t = self.get(i).t.loc[sorted_ix]
+
+            self.get(i).t.reset_index(drop=True, inplace=True)
+
+        self.logger.success()
+
+    def get_uncert_est_stats(self, cut: UncertaintyEstimation) -> pd.DataFrame:
+        """Get the median uncertainty, standard deviation of the flux,
+        and sigma_extra for each control light curve."""
+
+        def get_sigma_extra(median_dflux, stdev):
+            diff = stdev**2 - median_dflux**2
+            return max(0, np.sqrt(diff)) if diff > 0 else 0
+
+        stats = pd.DataFrame(
+            columns=["control_index", "median_dflux", "stdev", "sigma_extra"]
+        )
+        stats["control_index"] = self.control_lc_indices
+        stats.set_index("control_index", inplace=True)
+
+        for i in self.control_lc_indices:
+            dflux_clean_ix = self.get(i).ix_unmasked(
+                self.colnames.mask, maskval=cut.uncert_cut_flag
+            )
+            x2_clean_ix = self.get(i).ix_inrange(
+                colnames=[self.colnames.chisquare],
+                uplim=cut.temp_x2_max_value,
+                exclude_uplim=True,
+            )
+            clean_ix = AandB(dflux_clean_ix, x2_clean_ix)
+
+            median_dflux = self.get(i).get_median_dflux(indices=clean_ix)
+            stdev_flux = self.get(i).get_stdev_flux(indices=clean_ix)
+
+            if stdev_flux is None:
+                self.logger.warning(
+                    f"Could not get flux std dev using clean indices; retrying without preliminary chi-square cut of {cut.temp_x2_max_value}"
+                )
+                stdev_flux = self.get(i).get_stdev_flux(indices=dflux_clean_ix)
+                if stdev_flux is None:
+                    self.logger.warning(
+                        "Could not get flux std dev using clean indices; retrying with all indices"
+                    )
+                    stdev_flux = self.get(i).get_stdev_flux()
+
+            sigma_extra = get_sigma_extra(median_dflux, stdev_flux)
+
+            stats.loc[i, "median_dflux"] = median_dflux
+            stats.loc[i, "stdev"] = stdev_flux
+            stats.loc[i, "sigma_extra"] = sigma_extra
+
+        return stats
+
+    def add_noise_to_dflux(self, sigma_extra):
+        for i in self.lc_indices:
+            self.get(i).add_noise_to_dflux(sigma_extra)
+
+
+class BinnedTransient(BaseTransient):
+    def __init__(self, verbose: bool = False):
+        super().__init__(verbose=verbose)
+        self.lcs: Dict[int, BinnedLightCurve] = {}

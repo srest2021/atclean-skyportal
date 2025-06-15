@@ -6,7 +6,19 @@ from typing import Dict
 
 from download import AtlasLightCurveDownloader, ControlCoordinatesTable
 from lightcurve import LightCurve
-from utils import RA, Coordinates, CustomLogger, Dec, parse_arg_coords
+from utils import (
+    RA,
+    BadDayCut,
+    ChiSquareCut,
+    ControlLightCurveCut,
+    Coordinates,
+    CustomLogger,
+    CutList,
+    Dec,
+    UncertaintyCut,
+    UncertaintyEstimation,
+    parse_arg_coords,
+)
 
 
 def define_args(parser=None, usage=None, conflict_handler="resolve"):
@@ -90,7 +102,7 @@ if __name__ == "__main__":
     downloader = AtlasLightCurveDownloader(
         args.atlas_username, args.atlas_password, verbose=args.verbose
     )
-    lcs: Dict[int, LightCurve] = downloader.download(
+    transient = downloader.download(
         control_coords_table,
         lookbacktime=args.lookbacktime,
         max_mjd=args.max_mjd,
@@ -99,3 +111,16 @@ if __name__ == "__main__":
 
     # clean
     # TODO
+    cut_list = CutList(verbose=args.verbose)
+
+    # define which cuts to apply
+    # -- remove or add from this list at will
+    cut_list.add_many(
+        [
+            UncertaintyEstimation(),
+            UncertaintyCut(transient.get(0).colnames.dflux),
+            ChiSquareCut(transient.get(0).colnames.x2),
+            ControlLightCurveCut(),
+            BadDayCut(),
+        ]
+    )

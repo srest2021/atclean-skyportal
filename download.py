@@ -14,7 +14,7 @@ from astropy.coordinates import Angle, SkyCoord
 from astropy.time import Time
 
 from constants import CTRL_COORDINATES_COLNAMES
-from lightcurve import LightCurve
+from lightcurve import LightCurve, Transient
 from utils import ATLAS_API_COLNAMES, Coordinates, CustomLogger, new_row
 
 
@@ -357,23 +357,25 @@ class AtlasLightCurveDownloader:
         lookbacktime: Optional[float] = None,
         max_mjd: Optional[float] = None,
         flux2mag_sigmalimit: float = 3.0,
-    ) -> Dict[int, LightCurve]:
-        res: Dict[int, LightCurve] = {}
+    ) -> Transient:
+        transient = Transient()
 
         for control_index, coords in control_coords_table.iterator():
             self.logger.info(
                 f"Making light curve for control index {control_index}", newline=True
             )
-            res[control_index] = self.make_lc(
-                control_index,
-                coords,
-                lookbacktime=lookbacktime,
-                max_mjd=max_mjd,
-                flux2mag_sigmalimit=flux2mag_sigmalimit,
+            transient.add(
+                self.make_lc(
+                    control_index,
+                    coords,
+                    lookbacktime=lookbacktime,
+                    max_mjd=max_mjd,
+                    flux2mag_sigmalimit=flux2mag_sigmalimit,
+                )
             )
 
             self.logger.info("Updating control coordinates table with filter counts")
-            total_len, filt_lens = res[control_index].get_filt_lens()
+            total_len, filt_lens = transient.get(control_index).get_filt_lens()
             control_coords_table.update_filt_lens(control_index, total_len, filt_lens)
 
             self.logger.success()
@@ -381,4 +383,4 @@ class AtlasLightCurveDownloader:
         # control_coords_table now contains all control coordinates and other info
         # -- can return it if needed!
 
-        return res
+        return transient

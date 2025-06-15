@@ -231,7 +231,7 @@ class CleanedColumnNames(ColumnNames):
             "limiting_mag": "mag5sig",
             "mask": "Mask",
         }
-        optional_colnames = {}
+        optional_colnames = {"chisquare": "chi/N"}
         super().__init__(
             required_colnames=required_colnames, optional_colnames=optional_colnames
         )
@@ -465,9 +465,13 @@ class CutList:
     def add(self, cut: Cut):
         if cut.name() in self.list:
             self.logger.warning(
-                f"Cut by the name {cut.name()} already exists; overwriting", dots=True
+                f"Cut by the name {cut.name()} already exists; overwriting..."
             )
         self.list[cut.name()] = cut
+
+    def add_many(self, cuts: List[Cut]):
+        for cut in cuts:
+            self.add(cut)
 
     def get(self, name: str) -> Cut | None:
         if not name in self.list:
@@ -572,6 +576,24 @@ class CutList:
             if not name in skip_names and flag is not None:
                 mask = mask | flag
         return mask
+    
+    def iterator(self):
+        names: List = (
+            [
+                UncertaintyCut.name(),
+                UncertaintyEstimation.name(),
+                ChiSquareCut.name(),
+                ControlLightCurveCut.name(),
+            ]
+            + list(self.get_custom_cuts().keys())
+            + [
+                BadDayCut.name(),
+            ]
+        )
+
+        for name in names:
+            if name in self.list:
+                yield self.list[name]
 
     def __str__(self):
         output = []
