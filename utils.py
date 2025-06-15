@@ -22,18 +22,18 @@ class CustomLogger:
     def __init__(self, verbose: bool = False):
         self.verbose = verbose
 
-    def info(self, text: str, prefix=""):
+    def info(self, text: str, prefix="", newline:bool=False):
         if self.verbose:
-            print(f"{prefix}{text}")
+            print(f"{'\n' if newline else ''}{prefix}{text}")
 
-    def warning(self, text: str):
-        self.info(text, prefix="WARNING: ")
+    def warning(self, text: str, newline:bool=False):
+        self.info(text, prefix="WARNING: ", newline=newline)
 
-    def error(self, text: str):
-        self.info(text, prefix="ERROR: ")
+    def error(self, text: str, newline:bool=False):
+        self.info(text, prefix="ERROR: ", newline=newline)
 
-    def success(self, text: str = "Success"):
-        self.info(text)
+    def success(self, text: str = "Success", newline:bool=False):
+        self.info(text, newline=newline)
 
 
 def hexstring_to_int(hexstring):
@@ -86,9 +86,9 @@ class Dec(BaseAngle):
 
 
 class Coordinates:
-    def __init__(self, ra: str | Angle, dec: str | Angle):
-        self.ra: RA = RA(ra)
-        self.dec: Dec = Dec(dec)
+    def __init__(self, ra: str | Angle | RA, dec: str | Angle | Dec):
+        self.ra: RA = RA(ra) if not isinstance(ra, RA) else ra
+        self.dec: Dec = Dec(dec) if not isinstance(dec, Dec) else dec
 
     def get_RA_str(self) -> str:
         return f"{self.ra.angle.degree:0.14f}"
@@ -103,6 +103,34 @@ class Coordinates:
 
     def __str__(self):
         return f"RA {self.get_RA_str()}, Dec {self.get_Dec_str()}"
+
+
+def parse_comma_separated_string(string: Optional[str]):
+    if string is None:
+        return None
+
+    try:
+        return [item.strip() for item in string.split(",")]
+    except Exception as e:
+        raise RuntimeError(
+            f"Could not parse comma-separated string: {string}" f"\nERROR: {str(e)}"
+        )
+
+
+def parse_arg_coords(arg_coords: Optional[str]) -> Optional[Coordinates]:
+    parsed_coords = parse_comma_separated_string(arg_coords)
+    if parsed_coords is None:
+        return None
+    if len(parsed_coords) > 2:
+        raise RuntimeError(
+            "Too many coordinates in argument! Please provide comma-separated RA and Dec onlyy."
+        )
+    if len(parsed_coords) < 2:
+        raise RuntimeError(
+            "Too few coordinates in argument! Please provide comma-separated RA and Dec."
+        )
+
+    return Coordinates(parsed_coords[0], parsed_coords[1])
 
 
 class ColumnNames:

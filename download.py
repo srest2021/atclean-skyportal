@@ -292,15 +292,11 @@ class AtlasAuthenticator:
 class AtlasLightCurveDownloader:
     def __init__(
         self,
-        atclean_input_dir: str,
         atlas_username: str,
         atlas_password: str,
         verbose: bool = False,
     ):
         self.logger = CustomLogger(verbose=verbose)
-
-        self.atclean_input_dir = atclean_input_dir
-
         self.headers = AtlasAuthenticator.authenticate(atlas_username, atlas_password)
         if self.headers is None:
             raise RuntimeError("No token header")
@@ -352,7 +348,7 @@ class AtlasLightCurveDownloader:
         result = self.download_lc(coords, lookbacktime=lookbacktime, max_mjd=max_mjd)
 
         lc = LightCurve(control_index, coords, verbose=self.logger.verbose)
-        lc.set_and_preprocess(result, flux2mag_sigmalimit=flux2mag_sigmalimit)
+        lc.set(result, flux2mag_sigmalimit=flux2mag_sigmalimit)
         return lc
 
     def download(
@@ -365,6 +361,9 @@ class AtlasLightCurveDownloader:
         res: Dict[int, LightCurve] = {}
 
         for control_index, coords in control_coords_table.iterator():
+            self.logger.info(
+                f"Making light curve for control index {control_index}", newline=True
+            )
             res[control_index] = self.make_lc(
                 control_index,
                 coords,
@@ -373,8 +372,11 @@ class AtlasLightCurveDownloader:
                 flux2mag_sigmalimit=flux2mag_sigmalimit,
             )
 
+            self.logger.info("Updating control coordinates table with filter counts")
             total_len, filt_lens = res[control_index].get_filt_lens()
             control_coords_table.update_filt_lens(control_index, total_len, filt_lens)
+
+            self.logger.success()
 
         # control_coords_table now contains all control coordinates and other info
         # -- can return it if needed!
