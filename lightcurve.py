@@ -55,13 +55,13 @@ class BaseLightCurve(pdastrostatsclass):
         else:
             self.t = t.copy(deep=deep)
 
-        self._preprocess(**kwargs)
+        # self._preprocess(**kwargs)
 
     @property
     def default_mjd_colname(self):
         return self.colnames.mjd
 
-    def _preprocess(self, **kwargs):
+    def preprocess(self, **kwargs):
         if self.t is None or self.t.empty:
             return
 
@@ -248,7 +248,6 @@ class BaseLightCurve(pdastrostatsclass):
             verbose=self.logger.verbose,
         )
         new_lc.t = deepcopy(merged_t)  # skip preprocessing
-        new_lc.calculate_snr_col()
         return new_lc
 
     def split_by_filt(self) -> tuple[Self, Self]:
@@ -267,22 +266,19 @@ class BaseLightCurve(pdastrostatsclass):
         split_lcs = {}
         for filt in ["o", "c"]:
             new_lc = self.__class__(
-                control_index=self.control_index,
-                coords=self.coords,
-                colnames=self.colnames,
+                self.control_index,
+                self.coords,
                 filt=filt,
                 verbose=self.logger.verbose,
             )
             new_lc.set(self.t, indices=self.get_filt_ix(filt))
-            new_lc.calculate_snr_col()
             split_lcs[filt] = new_lc
 
         return split_lcs["o"], split_lcs["c"]
 
     def __str__(self):
-        if self.t is None or self.t.empty:
+        if self.t is None:
             return None
-
         return self.t.to_string()
 
 
@@ -313,7 +309,7 @@ class LightCurve(BaseLightCurve):
             t, indices=indices, flux2mag_sigmalimit=flux2mag_sigmalimit, deep=deep
         )
 
-    def _preprocess(self, flux2mag_sigmalimit=3.0):
+    def preprocess(self, flux2mag_sigmalimit=3.0):
         """
         Prepare the raw ATLAS light curve for cleaning
         (add mask column, sort by MJD, remove rows with duJy=0 or uJy=NaN, overwrite ATLAS magnitudes with our own)

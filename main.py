@@ -3,6 +3,7 @@
 # define command line arguments
 import argparse
 import sys
+import time
 from typing import Dict
 
 from download import AtlasLightCurveDownloader, ControlCoordinatesTable
@@ -82,6 +83,8 @@ def define_args(parser=None, usage=None, conflict_handler="resolve"):
 
 
 if __name__ == "__main__":
+    start_time = time.time()
+
     logger = CustomLogger()
     args = define_args().parse_args()
 
@@ -94,7 +97,6 @@ if __name__ == "__main__":
         num_controls=args.num_controls,
         verbose=args.verbose,
     )
-    sys.exit()
     downloader = AtlasLightCurveDownloader(
         args.username, args.password, verbose=args.verbose
     )
@@ -105,7 +107,8 @@ if __name__ == "__main__":
         flux2mag_sigmalimit=args.flux2mag_sigmalimit,
     )
 
-    print(transient_o.get_sn().__str__())
+    end_time = time.time()
+    print(f"Elapsed time: {end_time - start_time:.2f} seconds")
     sys.exit()
 
     # clean

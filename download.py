@@ -120,7 +120,7 @@ class ControlCoordinatesTable:
         self.sn_coords = sn_coords
         self.center_coords = center_coords
         self.sn_min_dist = sn_min_dist
-        self.radius = radius
+        self.radius = Angle(radius, u.arcsec)
         self.num_controls = num_controls
 
         # are we getting controls around SN or around a different location?
@@ -266,6 +266,11 @@ class ControlCoordinatesTable:
         for _, row in df.iterrows():
             yield row["control_index"], Coordinates(row["ra"], row["dec"])
 
+    def __str__(self):
+        if self.t is None:
+            return ""
+        return self.t.to_string()
+
 
 class AtlasAuthenticator:
     @staticmethod
@@ -321,8 +326,7 @@ class AtlasLightCurveDownloader:
             try:
                 result = query_atlas(
                     self.headers,
-                    coords.ra.angle.degree,
-                    coords.dec.angle.degree,
+                    coords,
                     min_mjd,
                     max_mjd,
                     verbose=self.logger.verbose,
@@ -344,7 +348,8 @@ class AtlasLightCurveDownloader:
     ):
         result = self.download_lc(coords, lookbacktime=lookbacktime, max_mjd=max_mjd)
         lc = LightCurve(control_index, coords, verbose=self.logger.verbose)
-        lc.set(result, deep=False, flux2mag_sigmalimit=flux2mag_sigmalimit)
+        lc.set(result, deep=False)
+        lc.preprocess(flux2mag_sigmalimit=flux2mag_sigmalimit)
         return lc
 
     def download(
@@ -357,7 +362,7 @@ class AtlasLightCurveDownloader:
         # make a multi-filter transient object
         transient = Transient(verbose=self.logger.verbose)
 
-        for control_index, coords in control_coords_table.iterator():
+        for control_index, coords in control_coords_table.iterator(include_sn=True):
             self.logger.info(
                 f"Making light curve for control index {control_index}", newline=True
             )
