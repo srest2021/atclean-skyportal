@@ -368,7 +368,7 @@ class AtlasLightCurveDownloader:
                 max_mjd=max_mjd,
                 flux2mag_sigmalimit=flux2mag_sigmalimit,
             )
-            transient.add(lc)
+            transient.add(lc, deep=False)
 
             self.logger.info("Updating control coordinates table with filter counts")
             control_coords_table.update_filt_lens(control_index, *lc.get_filt_lens())

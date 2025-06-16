@@ -34,9 +34,21 @@ class BaseLightCurve(pdastrostatsclass):
         self.colnames = colnames
 
     def set(self, t: pd.DataFrame, indices: Optional[List[int]] = None, **kwargs):
+        if t is None:
+            self.t = pd.DataFrame()
+            return
+        if t.empty:
+            self.t = pd.DataFrame(columns=t.columns)
+            return
+
         if indices is not None:
-            t = t.iloc[indices]
-        self.t = deepcopy(t)
+            if len(indices) == 0:
+                self.t = pd.DataFrame(columns=t.columns)
+            else:
+                self.t = deepcopy(t.iloc[indices])
+        else:
+            self.t = deepcopy(t)
+
         self._preprocess(**kwargs)
 
     @property
@@ -44,24 +56,40 @@ class BaseLightCurve(pdastrostatsclass):
         return self.colnames.mjd
 
     def _preprocess(self, **kwargs):
+        if self.t is None or self.t.empty:
+            return
+
         # calculate SNR
         self.calculate_snr_col()
 
     def get_filt_ix(self, filt: str):
+        if self.t is None or self.t.empty:
+            return []
+
+        if self.filt is not None:
+            return self.getindices()
+
+        if self.colnames.filter not in self.t.columns:
+            raise RuntimeError(f"Filter column '{self.colnames.filter}' not found")
+
         return self.ix_equal(self.colnames.filter, filt)
 
-    def get_filt_lens(self):
+    def get_filt_lens(self) -> tuple[int, int]:
         if self.t is None:
             raise RuntimeError("Table (self.t) cannot be None")
 
         return len(self.get_filt_ix("o")), len(self.get_filt_ix("c"))
 
     def get_flags(self) -> int:
-        if self.t is None or len(self.t) < 1:
+        if self.t is None or self.t.empty or self.colnames.mask not in self.t.columns:
             return 0
+
         return np.bitwise_or.reduce(self.t[self.colnames.mask])
 
     def get_good_indices(self, flag: Optional[int] = None) -> List[int]:
+        if self.t is None or self.t.empty:
+            return []
+
         # if flag is 0, return all indices
         if flag == 0:
             return self.getindices()
@@ -76,6 +104,9 @@ class BaseLightCurve(pdastrostatsclass):
         return self.ix_unmasked(self.colnames.mask, maskval=flag)
 
     def get_bad_indices(self, flag: Optional[int] = None) -> List[int]:
+        if self.t is None or self.t.empty:
+            return []
+
         # if flag is 0, return no indices
         if flag == 0:
             return []
@@ -90,26 +121,38 @@ class BaseLightCurve(pdastrostatsclass):
         return self.ix_masked(self.colnames.mask, maskval=flag)
 
     def remove_flag(self, flag):
+        if self.t is None or self.t.empty or self.colnames.mask not in self.t.columns:
+            return
+
         self.t[self.colnames.mask] = np.bitwise_and(
             self.t[self.colnames.mask].astype(int), ~flag
         )
 
     def update_mask_column(self, flag, indices, remove_old=True):
+        if self.t is None or self.t.empty:
+            return
+
+        if self.colnames.mask not in self.t.columns:
+            self.t[self.colnames.mask] = 0
+
         if remove_old:
             # remove any old flags of the same value
             self.remove_flag(flag)
 
         if len(indices) > 1:
-            flag_arr = np.full(self.t.loc[indices, [self.colnames.mask]].shape, flag)
+            flag_arr = np.full(len(indices), flag)
             self.t.loc[indices, self.colnames.mask] = np.bitwise_or(
-                self.t.loc[indices, [self.colnames.mask]].astype(int), flag_arr
+                self.t.loc[indices, self.colnames.mask].astype(int), flag_arr
             )
         elif len(indices) == 1:
-            self.t.loc[indices, self.colnames.mask] = (
+            self.t.at[indices[0], self.colnames.mask] = (
                 int(self.t.at[indices[0], self.colnames.mask]) | flag
             )
 
     def apply_cut(self, cut: Cut, indices: Optional[List[int]] = None):
+        if self.t is None or self.t.empty:
+            return
+
         if not cut.can_apply_directly():
             raise RuntimeError(f"Cannot directly apply the following cut: {cut}")
         if not cut.column in self.t.columns:
@@ -128,21 +171,26 @@ class BaseLightCurve(pdastrostatsclass):
 
         self.update_mask_column(cut.flag, cut_ix)
 
-        percent_cut = 100 * len(cut_ix) / len(all_ix)
-        return percent_cut
-
     def get_stdev_flux(self, indices=None):
+        if self.t is None or self.t.empty:
+            return np.nan
+
         self.calcaverage_sigmacutloop(
             self.colnames.flux, indices=indices, Nsigma=3.0, median_firstiteration=True
         )
         return self.statparams["stdev"]
 
     def get_median_dflux(self, indices=None):
+        if self.t is None or self.t.empty or len(indices) < 1:
+            return np.nan
         if indices is None:
             indices = self.getindices()
         return np.nanmedian(self.t.loc[indices, self.colnames.dflux])
 
     def calculate_snr_col(self):
+        if self.t is None or self.t.empty:
+            return
+
         # replace infs with NaNs
         self.logger.info("Replacing infs with NaNs")
         self.t.replace([np.inf, -np.inf], np.nan, inplace=True)
@@ -150,7 +198,7 @@ class BaseLightCurve(pdastrostatsclass):
         # calculate flux/dflux
         self.logger.info(f"Calculating flux/dflux in for '{self.colnames.snr}' column")
         self.t[self.colnames.snr] = (
-            self.t[self.colnames.flux] / self.t[self.colnames.dflux_new]
+            self.t[self.colnames.flux] / self.t[self.colnames.dflux]
         )
 
     def merge(self, other: Self) -> Self:
@@ -173,8 +221,13 @@ class BaseLightCurve(pdastrostatsclass):
             merged_filt = None
 
         # combine tables
-        merged_t = pd.concat([self.t, other.t], ignore_index=True)
-        merged_t.sort_values(by=[self.default_mjd_colname], ignore_index=True)
+        merged_t = pd.concat(
+            [self.t or pd.DataFrame(), other.t or pd.DataFrame()], ignore_index=True
+        )
+        if not merged_t.empty:
+            merged_t.sort_values(
+                by=[self.default_mjd_colname], ignore_index=True, inplace=True
+            )
 
         # create new lc
         new_lc = self.__class__(
@@ -189,12 +242,11 @@ class BaseLightCurve(pdastrostatsclass):
         return new_lc
 
     def split_by_filt(self) -> tuple[Self, Self]:
-        if self.t is None:
-            raise RuntimeError("Table (self.t) cannot be None")
         if self.colnames.filter not in self.t.columns:
             raise RuntimeError(
                 f"Filter column '{self.colnames.filter}' not found in data"
             )
+
         if self.filt is not None:
             self.logger.warning("Splitting a single-filter light curve by filter")
 
@@ -222,8 +274,7 @@ class LightCurve(BaseLightCurve):
         filt: Optional[str] = None,
         verbose: bool = False,
     ):
-        BaseLightCurve.__init__(
-            self,
+        super().__init__(
             control_index,
             coords,
             CleanedColumnNames(),
@@ -244,6 +295,9 @@ class LightCurve(BaseLightCurve):
         Prepare the raw ATLAS light curve for cleaning
         (add mask column, sort by MJD, remove rows with duJy=0 or uJy=NaN, overwrite ATLAS magnitudes with our own)
         """
+        if self.t is None or self.t.empty:
+            return
+
         if self.colnames.mask not in self.t.columns:
             # create mask column
             self.t[self.colnames.mask] = 0
@@ -345,10 +399,8 @@ class LightCurve(BaseLightCurve):
         self.t.drop(columns=drop_columns, inplace=True)
 
         # replace 'o' -> 'atlaso' and 'c' -> 'atlasc'
-        c_ix = self.ix_equal(self.colnames.filter, "c")
-        o_ix = self.ix_equal(self.colnames.filter, "o")
-        self.t.loc[c_ix, self.colnames.filter] = "atlasc"
-        self.t.loc[o_ix, self.colnames.filter] = "atlaso"
+        self.t.loc[self.get_filt_ix("c"), self.colnames.filter] = "atlasc"
+        self.t.loc[self.get_filt_ix("o"), self.colnames.filter] = "atlaso"
 
         # add optional columns
         self.colnames.add_many({"magsys": "magsys", "origin": "origin"})
@@ -368,6 +420,7 @@ class BinnedLightCurve(BaseLightCurve):
             control_index, coords, BinnedColumnNames(), filt=filt, verbose=verbose
         )
 
+    @property
     def default_mjd_colname(self):
         return self.colnames.mjdbin
 
@@ -404,12 +457,12 @@ class BaseTransient:
     def control_lc_indices(self) -> List[int]:
         return [i for i in self.lc_indices if i != 0]
 
-    def add(self, lc: BaseLightCurve):
+    def add(self, lc: BaseLightCurve, deep: bool = True):
         if lc.control_index in self.lcs:
             self.logger.warning(
                 f"Control index {lc.control_index} already exists; overwriting..."
             )
-        self.lcs[lc.control_index] = deepcopy(lc)
+        self.lcs[lc.control_index] = deepcopy(lc) if deep else lc
 
     def iterator(self):
         for i in self.lcs:
@@ -444,18 +497,18 @@ class BaseTransient:
         return new_transient
 
     def split_by_filt(self) -> tuple[Self, Self]:
-        # Create two new BaseTransient instances for filters 'o' and 'c'
+        # create two new BaseTransient instances for filters 'o' and 'c'
         transient_o = self.__class__(filt="o", verbose=self.logger.verbose)
         transient_c = self.__class__(filt="c", verbose=self.logger.verbose)
 
-        # Iterate over all BaseLightCurves in this transient
+        # iterate over all BaseLightCurves in this transient
         for lc in self.iterator():
             # split the BaseLightCurve into two, one for each filter
             lc_o, lc_c = lc.split_by_filt()
 
-            # Add the split light curves to the corresponding BaseTransient objects
-            transient_o.add(lc_o)
-            transient_c.add(lc_c)
+            # add the split light curves to the corresponding BaseTransient objects
+            transient_o.add(lc_o, deep=False)
+            transient_c.add(lc_c, deep=False)
 
         return transient_o, transient_c
 
