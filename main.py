@@ -102,7 +102,7 @@ if __name__ == "__main__":
     downloader = AtlasLightCurveDownloader(
         args.atlas_username, args.atlas_password, verbose=args.verbose
     )
-    transient = downloader.download(
+    transient_o, transient_c = downloader.download(
         control_coords_table,
         lookbacktime=args.lookbacktime,
         max_mjd=args.max_mjd,
@@ -113,14 +113,14 @@ if __name__ == "__main__":
     # TODO
     cut_list = CutList(verbose=args.verbose)
 
-    # define which cuts to apply
-    # -- remove or add from this list at will
-    cut_list.add_many(
-        [
-            UncertaintyEstimation(),
-            UncertaintyCut(transient.get(0).colnames.dflux),
-            ChiSquareCut(transient.get(0).colnames.x2),
-            ControlLightCurveCut(),
-            BadDayCut(),
-        ]
-    )
+    # # define which cuts to apply
+    # # -- remove or add from this list at will
+    # cut_list.add_many(
+    #     [
+    #         UncertaintyEstimation(),
+    #         UncertaintyCut(transient.colnames.dflux),
+    #         ChiSquareCut(transient.colnames.x2),
+    #         ControlLightCurveCut(),
+    #         BadDayCut(),
+    #     ]
+    # )

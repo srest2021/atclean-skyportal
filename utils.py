@@ -201,6 +201,12 @@ class ColumnNames:
         for key, name in coldict.items():
             self.update(key, name, is_required=is_required)
 
+    def remove(self, key: str):
+        if key in self._required_colnames:
+            del self._required_colnames[key]
+        if key in self._optional_colnames:
+            del self._optional_colnames[key]
+
     def has(self, name: str):
         return name in self._required_colnames or name in self._optional_colnames
 
@@ -231,7 +237,7 @@ class CleanedColumnNames(ColumnNames):
             "limiting_mag": "mag5sig",
             "mask": "Mask",
         }
-        optional_colnames = {"chisquare": "chi/N"}
+        optional_colnames = {"chisquare": "chi/N", "snr": "SNR"}
         super().__init__(
             required_colnames=required_colnames, optional_colnames=optional_colnames
         )

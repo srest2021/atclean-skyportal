@@ -128,9 +128,7 @@ class ControlCoordinatesTable:
 
         self.construct()
 
-    def update_filt_lens(
-        self, control_index: int, total_len: int, filt_lens: Dict[str, int]
-    ):
+    def update_filt_lens(self, control_index: int, o_len: int, c_len: int):
         if self.t is None:
             raise RuntimeError("Table (self.t) cannot be None")
 
@@ -146,10 +144,9 @@ class ControlCoordinatesTable:
         index = indices[0]
 
         # update corresponding row in table with total and filter counts
-        # total_len, filt_lens = full_control_lc.get_filt_lens()
-        self.t.at[index, "n_detec"] = total_len
-        for filt in filt_lens:
-            self.t.at[index, f"n_detec_{filt}"] = filt_lens[filt]
+        self.t.at[index, "n_detec"] = o_len + c_len
+        self.t.at[index, f"n_detec_o"] = o_len
+        self.t.at[index, f"n_detec_c"] = c_len
 
     def add_row(
         self,
@@ -306,7 +303,7 @@ class AtlasLightCurveDownloader:
         coords: Coordinates,
         lookbacktime: Optional[float] = None,
         max_mjd: Optional[float] = None,
-    ):
+    ) -> pd.DataFrame:
         if lookbacktime is not None:
             min_mjd = float(Time.now().mjd - lookbacktime)
         else:
@@ -333,7 +330,7 @@ class AtlasLightCurveDownloader:
                 return result
             except Exception as e:
                 self.logger.warning("Exception caught: " + str(e))
-                self.logger.body("Trying again in 20 seconds! Waiting...")
+                self.logger.info("Trying again in 20 seconds! Waiting...")
                 time.sleep(20)
                 continue
 
@@ -344,9 +341,8 @@ class AtlasLightCurveDownloader:
         lookbacktime: Optional[float] = None,
         max_mjd: Optional[float] = None,
         flux2mag_sigmalimit: float = 3.0,
-    ) -> LightCurve:
+    ):
         result = self.download_lc(coords, lookbacktime=lookbacktime, max_mjd=max_mjd)
-
         lc = LightCurve(control_index, coords, verbose=self.logger.verbose)
         lc.set(result, flux2mag_sigmalimit=flux2mag_sigmalimit)
         return lc
@@ -357,30 +353,30 @@ class AtlasLightCurveDownloader:
         lookbacktime: Optional[float] = None,
         max_mjd: Optional[float] = None,
         flux2mag_sigmalimit: float = 3.0,
-    ) -> Transient:
-        transient = Transient()
+    ) -> tuple[Transient, Transient]:
+        # make a multi-filter transient object
+        transient = Transient(verbose=self.logger.verbose)
 
         for control_index, coords in control_coords_table.iterator():
             self.logger.info(
                 f"Making light curve for control index {control_index}", newline=True
             )
-            transient.add(
-                self.make_lc(
-                    control_index,
-                    coords,
-                    lookbacktime=lookbacktime,
-                    max_mjd=max_mjd,
-                    flux2mag_sigmalimit=flux2mag_sigmalimit,
-                )
+            lc = self.make_lc(
+                control_index,
+                coords,
+                lookbacktime=lookbacktime,
+                max_mjd=max_mjd,
+                flux2mag_sigmalimit=flux2mag_sigmalimit,
             )
+            transient.add(lc)
 
             self.logger.info("Updating control coordinates table with filter counts")
-            total_len, filt_lens = transient.get(control_index).get_filt_lens()
-            control_coords_table.update_filt_lens(control_index, total_len, filt_lens)
+            control_coords_table.update_filt_lens(control_index, *lc.get_filt_lens())
 
             self.logger.success()
 
-        # control_coords_table now contains all control coordinates and other info
+        # control_coords_table now contains all control coordinates, filter counts, and other info
         # -- can return it if needed!
 
-        return transient
+        # return a transient object for each filter, o and c
+        return transient.split_by_filt()

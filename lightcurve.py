@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 from copy import deepcopy
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Self
 
 import numpy as np
 import pandas as pd
@@ -19,15 +19,33 @@ from utils import (
 
 class BaseLightCurve(pdastrostatsclass):
     def __init__(
-        self, control_index: int, colnames: ColumnNames, verbose: bool = False
+        self,
+        control_index: int,
+        coords: Coordinates,
+        colnames: ColumnNames,
+        filt: Optional[str] = None,
+        verbose: bool = False,
     ):
-        pdastrostatsclass.__init__(self)
+        super().__init__()
         self.logger = CustomLogger(verbose=verbose)
         self.control_index = control_index
+        self.coords = coords
+        self.filt = filt
         self.colnames = colnames
 
-    def set(self, t: pd.DataFrame):
+    def set(self, t: pd.DataFrame, indices: Optional[List[int]] = None, **kwargs):
+        if indices is not None:
+            t = t.iloc[indices]
         self.t = deepcopy(t)
+        self._preprocess(**kwargs)
+
+    @property
+    def default_mjd_colname(self):
+        return self.colnames.mjd
+
+    def _preprocess(self, **kwargs):
+        # calculate SNR
+        self.calculate_snr_col()
 
     def get_filt_ix(self, filt: str):
         return self.ix_equal(self.colnames.filter, filt)
@@ -36,17 +54,12 @@ class BaseLightCurve(pdastrostatsclass):
         if self.t is None:
             raise RuntimeError("Table (self.t) cannot be None")
 
-        total_len = len(self.t)
-        filt_lens = {
-            "o": len(self.get_filt_ix("o")),
-            "c": len(self.get_filt_ix("c")),
-        }
-        return total_len, filt_lens
+        return len(self.get_filt_ix("o")), len(self.get_filt_ix("c"))
 
     def get_flags(self) -> int:
         if self.t is None or len(self.t) < 1:
             return 0
-        np.bitwise_or.reduce(self.t[self.colnames.mask])
+        return np.bitwise_or.reduce(self.t[self.colnames.mask])
 
     def get_good_indices(self, flag: Optional[int] = None) -> List[int]:
         # if flag is 0, return all indices
@@ -129,29 +142,118 @@ class BaseLightCurve(pdastrostatsclass):
             indices = self.getindices()
         return np.nanmedian(self.t.loc[indices, self.colnames.dflux])
 
+    def calculate_snr_col(self):
+        # replace infs with NaNs
+        self.logger.info("Replacing infs with NaNs")
+        self.t.replace([np.inf, -np.inf], np.nan, inplace=True)
+
+        # calculate flux/dflux
+        self.logger.info(f"Calculating flux/dflux in for '{self.colnames.snr}' column")
+        self.t[self.colnames.snr] = (
+            self.t[self.colnames.flux] / self.t[self.colnames.dflux_new]
+        )
+
+    def merge(self, other: Self) -> Self:
+        """
+        Merge this LightCurve with another one and return a new LightCurve instance
+        with the combined and sorted data. Used for merging two light curves with
+        different filters together.
+        """
+        if not isinstance(other, BaseLightCurve):
+            raise TypeError("Can only merge with another BaseLightCurve instance.")
+        if self.control_index != other.control_index:
+            raise ValueError(
+                f"Control indices ({self.control_index} and {other.control_index}) do not match"
+            )
+        # if self.colnames.required != other.colnames.required:
+        #     raise ValueError("Column name configurations do not match")
+
+        merged_filt = self.filt
+        if self.filt is None or other.filt is None or self.filt != other.filt:
+            merged_filt = None
+
+        # combine tables
+        merged_t = pd.concat([self.t, other.t], ignore_index=True)
+        merged_t.sort_values(by=[self.default_mjd_colname], ignore_index=True)
+
+        # create new lc
+        new_lc = self.__class__(
+            self.control_index,
+            self.coords,
+            self.colnames,
+            filt=merged_filt,
+            verbose=self.logger.verbose,
+        )
+        new_lc.t = deepcopy(merged_t)  # skip preprocessing
+        new_lc.calculate_snr_col()
+        return new_lc
+
+    def split_by_filt(self) -> tuple[Self, Self]:
+        if self.t is None:
+            raise RuntimeError("Table (self.t) cannot be None")
+        if self.colnames.filter not in self.t.columns:
+            raise RuntimeError(
+                f"Filter column '{self.colnames.filter}' not found in data"
+            )
+        if self.filt is not None:
+            self.logger.warning("Splitting a single-filter light curve by filter")
+
+        split_lcs = {}
+        for filt in ["o", "c"]:
+            new_lc = self.__class__(
+                control_index=self.control_index,
+                coords=self.coords,
+                colnames=self.colnames,
+                filt=filt,
+                verbose=self.logger.verbose,
+            )
+            new_lc.set(self.t, indices=self.get_filt_ix(filt))
+            new_lc.calculate_snr_col()
+            split_lcs[filt] = new_lc
+
+        return split_lcs["o"], split_lcs["c"]
+
 
 class LightCurve(BaseLightCurve):
-    def __init__(self, control_index: int, coords: Coordinates, verbose: bool = False):
+    def __init__(
+        self,
+        control_index: int,
+        coords: Coordinates,
+        filt: Optional[str] = None,
+        verbose: bool = False,
+    ):
         BaseLightCurve.__init__(
-            self, control_index, CleanedColumnNames(), verbose=verbose
+            self,
+            control_index,
+            coords,
+            CleanedColumnNames(),
+            filt=filt,
+            verbose=verbose,
         )
-        self.coords = coords
 
-    def set(self, t: pd.DataFrame, flux2mag_sigmalimit: float = 3.0):
-        super().set(t)
-        self._preprocess(flux2mag_sigmalimit=flux2mag_sigmalimit)
+    def set(
+        self,
+        t: pd.DataFrame,
+        indices: Optional[List[int]] = None,
+        flux2mag_sigmalimit: float = 3.0,
+    ):
+        super().set(t, indices=indices, flux2mag_sigmalimit=flux2mag_sigmalimit)
 
     def _preprocess(self, flux2mag_sigmalimit=3.0):
-        if self.colnames.mask not in self.t:
+        """
+        Prepare the raw ATLAS light curve for cleaning
+        (add mask column, sort by MJD, remove rows with duJy=0 or uJy=NaN, overwrite ATLAS magnitudes with our own)
+        """
+        if self.colnames.mask not in self.t.columns:
             # create mask column
             self.t[self.colnames.mask] = 0
 
         # sort by mjd
-        self.t = self.t.sort_values(by=["MJD"], ignore_index=True)
+        self.t = self.t.sort_values(by=[self.default_mjd_colname], ignore_index=True)
 
         # remove rows with duJy=0 or uJy=nan
-        dflux_zero_ix = self.ix_inrange(colnames="duJy", lowlim=0, uplim=0)
-        flux_nan_ix = self.ix_is_null(colnames="uJy")
+        dflux_zero_ix = self.ix_inrange(colnames=self.colnames.dflux, lowlim=0, uplim=0)
+        flux_nan_ix = self.ix_is_null(colnames=self.colnames.flux)
         self.logger.info(
             f'Deleting {len(dflux_zero_ix) + len(flux_nan_ix)} rows with "duJy"==0 or "uJy"==NaN'
         )
@@ -163,21 +265,60 @@ class LightCurve(BaseLightCurve):
             "Converting flux to magnitude (and overwriting original ATLAS 'm' and 'dm' columns)"
         )
         self.flux2mag(
-            "uJy", "duJy", "m", "dm", zpt=23.9, upperlim_Nsigma=flux2mag_sigmalimit
+            self.colnames.flux,
+            self.colnames.dflux,
+            self.colnames.mag,
+            self.colnames.dmag,
+            zpt=23.9,
+            upperlim_Nsigma=flux2mag_sigmalimit,
         )
         # drop extra SNR column
         if "__tmp_SN" in self.t.columns:
             self.t.drop(columns=["__tmp_SN"], inplace=True)
 
+        # calculate SNR
+        self.calculate_snr_col()
+
     def add_noise_to_dflux(self, sigma_extra):
-        # new_dflux_colname = f"{self.colnames.dflux}_new"
+        """
+        Add sigma_extra to the dflux column in quadrature.
+        """
+        # add in quadrature to dflux column
         self.t[self.colnames.dflux] = np.sqrt(
-            self.t[self.colnames.dflux] * self.t[self.colnames.dflux] + sigma_extra**2
+            self.t[self.colnames.dflux] ** 2 + sigma_extra**2
         )
-        # self.colnames.update("dflux_new", new_dflux_colname)
-        # self.calculate_fdf_column()
+
+        # store the sigma_extra we added in a new column
+        self.colnames.update("dflux_offset", "dflux_offset_in_quadrature")
+        self.t[self.colnames.dflux_offset] = np.full(len(self.t), sigma_extra)
+
+        # recalculate SNR
+        self.calculate_snr_col()
+
+    def remove_noise_from_dflux(self):
+        """
+        Remove sigma_extra that was previously added in quadrature to the dflux column.
+        Assumes sigma_extra is stored in self.colnames.dflux_offset as a constant value.
+        """
+        # get sigma_extra from the offset column
+        sigma_extra = self.t[self.colnames.dflux_offset].iloc[0]
+
+        # remove in quadrature, ensuring no negative values
+        corrected_squared = self.t[self.colnames.dflux] ** 2 - sigma_extra**2
+        corrected_squared[corrected_squared < 0] = 0  # avoid NaNs from sqrt of negative
+        self.t[self.colnames.dflux] = np.sqrt(corrected_squared)
+
+        # clean up columns
+        self.t.drop(columns=[self.colnames.dflux_offset], inplace=True)
+        self.colnames.remove("dflux_offset")
+
+        # recalculate SNR
+        self.calculate_snr_col()
 
     def postprocess(self):
+        """
+        Prepare the cleaned light curve for SkyPortal by handling desired columnss
+        """
         # convert column names
         update_cols_dict = {
             self.colnames.mjd: "mjd",
@@ -216,12 +357,24 @@ class LightCurve(BaseLightCurve):
 
 
 class BinnedLightCurve(BaseLightCurve):
-    def __init__(self, control_index: int, verbose: bool = False):
-        super().__init__(control_index, BinnedColumnNames(), verbose=verbose)
+    def __init__(
+        self,
+        control_index: int,
+        coords: Coordinates,
+        filt: Optional[str] = None,
+        verbose: bool = False,
+    ):
+        super().__init__(
+            control_index, coords, BinnedColumnNames(), filt=filt, verbose=verbose
+        )
+
+    def default_mjd_colname(self):
+        return self.colnames.mjdbin
 
 
 class BaseTransient:
-    def __init__(self, verbose: bool = False):
+    def __init__(self, filt: Optional[str] = None, verbose: bool = False):
+        self.filt = filt
         self.lcs: Dict[int, BaseLightCurve] = {}
         self.logger = CustomLogger(verbose=verbose)
 
@@ -269,11 +422,51 @@ class BaseTransient:
         for i in self.lcs:
             self.get(i).apply_cut(cut)
 
+    def merge(self, other: Self) -> Self:
+        if not isinstance(other, BaseTransient):
+            raise TypeError("Can only merge with another BaseTransient instance.")
+
+        merged_filt = self.filt
+        if self.filt is None or other.filt is None or self.filt != other.filt:
+            merged_filt = None
+
+        new_transient = self.__class__(filt=merged_filt, verbose=self.logger.verbose)
+        all_indices = set(self.lcs.keys()).union(set(other.lcs.keys()))
+
+        for idx in all_indices:
+            if idx in self.lcs and idx in other.lcs:
+                new_transient.add(self.lcs[idx].merge(other.lcs[idx]))
+            elif idx in self.lcs:
+                new_transient.add(self.lcs[idx])
+            else:
+                new_transient.add(other.lcs[idx])
+
+        return new_transient
+
+    def split_by_filt(self) -> tuple[Self, Self]:
+        # Create two new BaseTransient instances for filters 'o' and 'c'
+        transient_o = self.__class__(filt="o", verbose=self.logger.verbose)
+        transient_c = self.__class__(filt="c", verbose=self.logger.verbose)
+
+        # Iterate over all BaseLightCurves in this transient
+        for lc in self.iterator():
+            # split the BaseLightCurve into two, one for each filter
+            lc_o, lc_c = lc.split_by_filt()
+
+            # Add the split light curves to the corresponding BaseTransient objects
+            transient_o.add(lc_o)
+            transient_c.add(lc_c)
+
+        return transient_o, transient_c
+
 
 class Transient(BaseTransient):
-    def __init__(self, verbose: bool = False):
-        super().__init__(verbose=verbose)
+    def __init__(self, filt: Optional[str] = None, verbose: bool = False):
+        super().__init__(filt=filt, verbose=verbose)
         self.lcs: Dict[int, LightCurve] = {}
+
+    def get(self, control_index: int) -> LightCurve:
+        return super().get(control_index)
 
     def match_control_mjds(self):
         """Make sure all control light curve MJDs exactly match SN MJDs"""
@@ -387,8 +580,20 @@ class Transient(BaseTransient):
         for i in self.lc_indices:
             self.get(i).add_noise_to_dflux(sigma_extra)
 
+    def postprocess(self):
+        if self.filt is not None:
+            raise RuntimeError(
+                f"Filter '{self.filt}' should be None for postprocessing"
+            )
+
+        for i in self.lc_indices:
+            self.get(i).postprocess()
+
 
 class BinnedTransient(BaseTransient):
-    def __init__(self, verbose: bool = False):
-        super().__init__(verbose=verbose)
+    def __init__(self, filt: Optional[str] = None, verbose: bool = False):
+        super().__init__(filt=filt, verbose=verbose)
         self.lcs: Dict[int, BinnedLightCurve] = {}
+
+    def get(self, control_index: int) -> BinnedLightCurve:
+        return super().get(control_index)

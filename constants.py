@@ -13,6 +13,26 @@ CTRL_COORDINATES_COLNAMES = [
     "n_detec_o",
 ]
 
+LIMCUTS_COLNAMES = [
+    "PSF Chi-Square Cut",
+    "N",
+    "Ngood",
+    "Nbad",
+    "Nkept",
+    "Ncut",
+    "Ngood,kept",
+    "Ngood,cut",
+    "Nbad,kept",
+    "Nbad,cut",
+    "Pgood,kept",
+    "Pgood,cut",
+    "Pbad,kept",
+    "Pbad,cut",
+    "Ngood,kept/Ngood",
+    "Ploss",
+    "Pcontamination",
+]
+
 ATLAS_API_COLNAMES = [
     "MJD",
     "m",
