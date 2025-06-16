@@ -87,37 +87,41 @@ class BaseLightCurve(pdastrostatsclass):
         return np.bitwise_or.reduce(self.t[self.colnames.mask])
 
     def get_good_indices(self, flag: Optional[int] = None) -> List[int]:
+        """
+        Return the list of indices corresponding to "good" (unmasked) rows.
+
+        A row is considered "good" if its value in the mask column does not contain
+        the specified `flag`. If `flag` is 0 or None, all unmasked rows will be returned.
+        """
         if self.t is None or self.t.empty:
             return []
 
-        # if flag is 0, return all indices
-        if flag == 0:
+        if not self.colnames.mask in self.t.columns:
             return self.getindices()
 
-        if flag is None:  # if no flag is given
-            # check if mask column exists
-            if not self.colnames.mask in self.t.columns:
-                return self.getindices()
+        if flag == 0:
+            flag = None
 
-            # return all unmasked indices
-            flag = self.get_flags()
+        # note: if flag is None, this will just return all unmasked indices
         return self.ix_unmasked(self.colnames.mask, maskval=flag)
 
     def get_bad_indices(self, flag: Optional[int] = None) -> List[int]:
+        """
+        Return the list of indices corresponding to "bad" (masked) rows.
+
+        A row is considered "bad" if its value in the mask column contains
+        the specified `flag`. If `flag` is 0 or None, all masked rows will be returned.
+        """
         if self.t is None or self.t.empty:
             return []
 
-        # if flag is 0, return no indices
+        if not self.colnames.mask in self.t.columns:
+            return self.getindices()
+
         if flag == 0:
-            return []
+            flag = None
 
-        if flag is None:  # if no flag is given
-            # check if mask column exists
-            if not self.colnames.mask in self.t.columns:
-                return self.getindices()
-
-            # return all masked indices
-            flag = self.get_flags()
+        # note: if flag is None, this will just return all masked indices
         return self.ix_masked(self.colnames.mask, maskval=flag)
 
     def remove_flag(self, flag):
@@ -157,7 +161,7 @@ class BaseLightCurve(pdastrostatsclass):
             raise RuntimeError(f"Cannot directly apply the following cut: {cut}")
         if not cut.column in self.t.columns:
             raise RuntimeError(
-                f"No column name '{cut.column}' exists in light curve; cannot apply cut"
+                f"Column '{cut.column}' not found in light curve; cannot apply cut '{cut.name()}'"
             )
 
         all_ix = self.getindices(indices)
@@ -181,7 +185,7 @@ class BaseLightCurve(pdastrostatsclass):
         return self.statparams["stdev"]
 
     def get_median_dflux(self, indices=None):
-        if self.t is None or self.t.empty or len(indices) < 1:
+        if self.t is None or self.t.empty or (indices is not None and len(indices) < 1):
             return np.nan
         if indices is None:
             indices = self.getindices()
@@ -486,13 +490,13 @@ class BaseTransient:
         new_transient = self.__class__(filt=merged_filt, verbose=self.logger.verbose)
         all_indices = set(self.lcs.keys()).union(set(other.lcs.keys()))
 
-        for idx in all_indices:
-            if idx in self.lcs and idx in other.lcs:
-                new_transient.add(self.lcs[idx].merge(other.lcs[idx]))
-            elif idx in self.lcs:
-                new_transient.add(self.lcs[idx])
+        for i in all_indices:
+            if i in self.lcs and i in other.lcs:
+                new_transient.add(self.get(i).merge(other.get(i)))
+            elif i in self.lcs:
+                new_transient.add(self.get(i))
             else:
-                new_transient.add(other.lcs[idx])
+                new_transient.add(other.get(i))
 
         return new_transient
 
