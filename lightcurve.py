@@ -33,7 +33,13 @@ class BaseLightCurve(pdastrostatsclass):
         self.filt = filt
         self.colnames = colnames
 
-    def set(self, t: pd.DataFrame, indices: Optional[List[int]] = None, **kwargs):
+    def set(
+        self,
+        t: pd.DataFrame,
+        indices: Optional[List[int]] = None,
+        deep: bool = True,
+        **kwargs,
+    ):
         if t is None:
             self.t = pd.DataFrame()
             return
@@ -45,9 +51,9 @@ class BaseLightCurve(pdastrostatsclass):
             if len(indices) == 0:
                 self.t = pd.DataFrame(columns=t.columns)
             else:
-                self.t = deepcopy(t.iloc[indices])
+                self.t = t.iloc[indices].copy(deep=deep)
         else:
-            self.t = deepcopy(t)
+            self.t = t.copy(deep=deep)
 
         self._preprocess(**kwargs)
 
@@ -246,6 +252,10 @@ class BaseLightCurve(pdastrostatsclass):
         return new_lc
 
     def split_by_filt(self) -> tuple[Self, Self]:
+        """
+        Create two new class instances for filters 'o' and 'c'.
+        Underlying dataframes are deepcopied and independent of self.
+        """
         if self.colnames.filter not in self.t.columns:
             raise RuntimeError(
                 f"Filter column '{self.colnames.filter}' not found in data"
@@ -269,6 +279,12 @@ class BaseLightCurve(pdastrostatsclass):
 
         return split_lcs["o"], split_lcs["c"]
 
+    def __str__(self):
+        if self.t is None or self.t.empty:
+            return None
+
+        return self.t.to_string()
+
 
 class LightCurve(BaseLightCurve):
     def __init__(
@@ -291,8 +307,11 @@ class LightCurve(BaseLightCurve):
         t: pd.DataFrame,
         indices: Optional[List[int]] = None,
         flux2mag_sigmalimit: float = 3.0,
+        deep: bool = True,
     ):
-        super().set(t, indices=indices, flux2mag_sigmalimit=flux2mag_sigmalimit)
+        super().set(
+            t, indices=indices, flux2mag_sigmalimit=flux2mag_sigmalimit, deep=deep
+        )
 
     def _preprocess(self, flux2mag_sigmalimit=3.0):
         """
@@ -480,6 +499,16 @@ class BaseTransient:
             self.get(i).apply_cut(cut)
 
     def merge(self, other: Self) -> Self:
+        """
+        Merge this BaseTransient instance with another, combining their contained light curves.
+
+        :returns: A new BaseTransient instance containing merged light curves from both inputs.
+
+        - For light curves with the same index in both, their `merge` method is called and combined.
+        - Light curves unique to either instance are added as-is.
+        - The `filt` attribute of the new instance is set to `self.filt` only if both have the same non-None filter;
+          otherwise, it is set to None.
+        """
         if not isinstance(other, BaseTransient):
             raise TypeError("Can only merge with another BaseTransient instance.")
 
@@ -501,13 +530,16 @@ class BaseTransient:
         return new_transient
 
     def split_by_filt(self) -> tuple[Self, Self]:
-        # create two new BaseTransient instances for filters 'o' and 'c'
+        """
+        Create two new BaseTransient instances for filters 'o' and 'c'.
+        Underlying dataframes are independent of self.
+        """
         transient_o = self.__class__(filt="o", verbose=self.logger.verbose)
         transient_c = self.__class__(filt="c", verbose=self.logger.verbose)
 
         # iterate over all BaseLightCurves in this transient
         for lc in self.iterator():
-            # split the BaseLightCurve into two, one for each filter
+            # split the BaseLightCurve into two independent ones, one for each filter
             lc_o, lc_c = lc.split_by_filt()
 
             # add the split light curves to the corresponding BaseTransient objects

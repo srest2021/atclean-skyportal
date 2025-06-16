@@ -13,9 +13,9 @@ from astropy import units as u
 from astropy.coordinates import Angle, SkyCoord
 from astropy.time import Time
 
-from constants import CTRL_COORDINATES_COLNAMES
+from constants import CTRL_COORDINATES_COLNAMES, ATLAS_API_COLNAMES
 from lightcurve import LightCurve, Transient
-from utils import ATLAS_API_COLNAMES, Coordinates, CustomLogger, new_row
+from utils import Coordinates, CustomLogger, new_row
 
 
 def build_payload(coords: Coordinates, min_mjd: float, max_mjd: float) -> Dict:
@@ -344,7 +344,7 @@ class AtlasLightCurveDownloader:
     ):
         result = self.download_lc(coords, lookbacktime=lookbacktime, max_mjd=max_mjd)
         lc = LightCurve(control_index, coords, verbose=self.logger.verbose)
-        lc.set(result, flux2mag_sigmalimit=flux2mag_sigmalimit)
+        lc.set(result, deep=False, flux2mag_sigmalimit=flux2mag_sigmalimit)
         return lc
 
     def download(

@@ -2,6 +2,7 @@
 
 # define command line arguments
 import argparse
+import sys
 from typing import Dict
 
 from download import AtlasLightCurveDownloader, ControlCoordinatesTable
@@ -68,20 +69,14 @@ def define_args(parser=None, usage=None, conflict_handler="resolve"):
     )
 
     # ATLAS credentials
-    parser.add_argument(
-        "--atlas_username", type=str, default=None, help="ATLAS API username"
-    )
-    parser.add_argument(
-        "--atlas_password", type=str, default=None, help="ATLAS API password"
-    )
+    parser.add_argument("--username", type=str, default=None, help="ATLAS API username")
+    parser.add_argument("--password", type=str, default=None, help="ATLAS API password")
 
     # cleaning
     # TODO
 
     # miscellaneous
-    parser.add_argument(
-        "-v", "--verbose", type=bool, default=False, help="verbosity level"
-    )
+    parser.add_argument("-v", "--verbose", action="store_true", help="verbosity level")
 
     return parser
 
@@ -99,8 +94,9 @@ if __name__ == "__main__":
         num_controls=args.num_controls,
         verbose=args.verbose,
     )
+    sys.exit()
     downloader = AtlasLightCurveDownloader(
-        args.atlas_username, args.atlas_password, verbose=args.verbose
+        args.username, args.password, verbose=args.verbose
     )
     transient_o, transient_c = downloader.download(
         control_coords_table,
@@ -108,6 +104,9 @@ if __name__ == "__main__":
         max_mjd=args.max_mjd,
         flux2mag_sigmalimit=args.flux2mag_sigmalimit,
     )
+
+    print(transient_o.get_sn().__str__())
+    sys.exit()
 
     # clean
     # TODO

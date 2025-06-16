@@ -22,17 +22,18 @@ class CustomLogger:
     def __init__(self, verbose: bool = False):
         self.verbose = verbose
 
-    def info(self, text: str, prefix="", newline:bool=False):
+    def info(self, text: str, prefix="", newline: bool = False):
+        newline_part = "\n" if newline else ""
         if self.verbose:
-            print(f"{'\n' if newline else ''}{prefix}{text}")
+            print(f"{newline_part}{prefix}{text}")
 
-    def warning(self, text: str, newline:bool=False):
+    def warning(self, text: str, newline: bool = False):
         self.info(text, prefix="WARNING: ", newline=newline)
 
-    def error(self, text: str, newline:bool=False):
+    def error(self, text: str, newline: bool = False):
         self.info(text, prefix="ERROR: ", newline=newline)
 
-    def success(self, text: str = "Success", newline:bool=False):
+    def success(self, text: str = "Success", newline: bool = False):
         self.info(text, newline=newline)
 
 
@@ -582,7 +583,7 @@ class CutList:
             if not name in skip_names and flag is not None:
                 mask = mask | flag
         return mask
-    
+
     def iterator(self):
         names: List = (
             [
