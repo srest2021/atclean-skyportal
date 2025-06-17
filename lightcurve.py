@@ -718,7 +718,7 @@ class Transient(BaseTransient):
 
             if stdev_flux is None:
                 self.logger.warning(
-                    f"Could not get flux std dev using clean indices; retrying without preliminary chi-square cut of {cut.temp_x2_max_value}"
+                    f"Could not get flux std dev using clean indices; retrying without preliminary chi-square cut of {temp_x2_max_value}"
                 )
                 stdev_flux = self.get(i).get_stdev_flux(indices=dflux_clean_ix)
                 if stdev_flux is None:
