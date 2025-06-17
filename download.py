@@ -344,12 +344,10 @@ class AtlasLightCurveDownloader:
         coords: Coordinates,
         lookbacktime: Optional[float] = None,
         max_mjd: Optional[float] = None,
-        flux2mag_sigmalimit: float = 3.0,
     ):
         result = self.download_lc(coords, lookbacktime=lookbacktime, max_mjd=max_mjd)
         lc = LightCurve(control_index, coords, verbose=self.logger.verbose)
         lc.set(result, deep=False)
-        lc.preprocess(flux2mag_sigmalimit=flux2mag_sigmalimit)
         return lc
 
     def download(
@@ -367,11 +365,7 @@ class AtlasLightCurveDownloader:
                 f"Making light curve for control index {control_index}", newline=True
             )
             lc = self.make_lc(
-                control_index,
-                coords,
-                lookbacktime=lookbacktime,
-                max_mjd=max_mjd,
-                flux2mag_sigmalimit=flux2mag_sigmalimit,
+                control_index, coords, lookbacktime=lookbacktime, max_mjd=max_mjd
             )
             transient.add(lc, deep=False)
 
@@ -379,6 +373,8 @@ class AtlasLightCurveDownloader:
             control_coords_table.update_filt_lens(control_index, *lc.get_filt_lens())
 
             self.logger.success()
+
+        transient.preprocess(flux2mag_sigmalimit=flux2mag_sigmalimit)
 
         # control_coords_table now contains all control coordinates, filter counts, and other info
         # -- can return it if needed!

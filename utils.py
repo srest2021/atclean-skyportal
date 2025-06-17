@@ -260,7 +260,7 @@ class BinnedColumnNames(ColumnNames):
         )
 
 
-class Cut(ABC):
+"""class Cut(ABC):
     def __init__(
         self,
         column: Optional[str] = None,
@@ -292,7 +292,7 @@ class Cut(ABC):
         pass
 
     def get_flags(self, return_keys=False) -> Dict[str, int] | List[int]:
-        """Extract all attributes that end in '_flag' or are 'flag'."""
+        # Extract all attributes that end in '_flag' or are 'flag'.
         flags = {
             key: value
             for key, value in vars(self).items()
@@ -332,7 +332,7 @@ class CustomCut(Cut):
             raise ValueError("Please pass a min value, max value, or both")
 
     def name(self) -> str:
-        """Generate a unique name based on all attributes that define this cut."""
+        # Generate a unique name based on all attributes that define this cut.
         params = [f"column={self.column}"]
         if self.flag is not None:
             params.append(f"flag={hex(self.flag)}")
@@ -494,9 +494,7 @@ class CutList:
             self.remove(name)
 
     def remove_by_flag(self, flag: int):
-        """
-        Removes any Cut object from self.list that has a matching Cut.flag value.
-        """
+        # Removes any Cut object from self.list that has a matching Cut.flag value.
         to_remove = [
             name
             for name, cut in self.list.items()
@@ -607,3 +605,4 @@ class CutList:
         for name in self.list:
             output.append("• " + self.list[name].__str__())
         return "\n".join(output)
+"""

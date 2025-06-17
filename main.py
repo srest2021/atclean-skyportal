@@ -111,26 +111,11 @@ if __name__ == "__main__":
     # clean
     # TODO
 
-    cut_list = CutList(verbose=args.verbose)
-
-    # define which cuts to apply
-    # -- remove or add from this list at will
-    cut_list.add_many(
-        [
-            UncertaintyEstimation(),
-            UncertaintyCut(transient_o.colnames.dflux),
-            ChiSquareCut(transient_o.colnames.x2),
-            ControlLightCurveCut(),
-            BadDayCut(),
-        ]
-    )
-    logger.info(cut_list)
-
     sys.exit()
 
     cleaner = LightCurveCleaner(verbose=args.verbose)
-    cleaner.clean(cut_list, transient_o)
-    cleaner.clean(cut_list, transient_c)
+    cleaner.clean_default(transient_o)
+    cleaner.clean_default(transient_c)
 
     end_time = time.time()
     print(f"Elapsed time: {end_time - start_time:.2f} seconds")

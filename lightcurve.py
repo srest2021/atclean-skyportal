@@ -10,10 +10,12 @@ from utils import (
     BinnedColumnNames,
     CleanedColumnNames,
     ColumnNames,
+    ControlLightCurveCut,
     Coordinates,
     CustomLogger,
     Cut,
     UncertaintyEstimation,
+    combine_flags,
 )
 
 
@@ -38,7 +40,6 @@ class BaseLightCurve(pdastrostatsclass):
         t: pd.DataFrame,
         indices: Optional[List[int]] = None,
         deep: bool = True,
-        **kwargs,
     ):
         if t is None:
             self.t = pd.DataFrame()
@@ -54,8 +55,6 @@ class BaseLightCurve(pdastrostatsclass):
                 self.t = t.iloc[indices].copy(deep=deep)
         else:
             self.t = t.copy(deep=deep)
-
-        # self._preprocess(**kwargs)
 
     @property
     def default_mjd_colname(self):
@@ -159,27 +158,35 @@ class BaseLightCurve(pdastrostatsclass):
                 int(self.t.at[indices[0], self.colnames.mask]) | flag
             )
 
-    def apply_cut(self, cut: Cut, indices: Optional[List[int]] = None):
+    def apply_cut(
+        self,
+        column: str,
+        flag: int,
+        min_value: Optional[float] = None,
+        max_value: Optional[float] = None,
+        indices: Optional[List[int]] = None,
+    ):
         if self.t is None or self.t.empty:
             return
 
-        if not cut.can_apply_directly():
-            raise RuntimeError(f"Cannot directly apply the following cut: {cut}")
-        if not cut.column in self.t.columns:
+        if not column in self.t.columns:
             raise RuntimeError(
-                f"Column '{cut.column}' not found in light curve; cannot apply cut '{cut.name()}'"
+                f"Column '{column}' not found in light curve; cannot apply cut"
             )
 
         all_ix = self.getindices(indices)
-        kept_ix = self.ix_inrange(
-            colnames=[cut.column],
-            lowlim=cut.min_value,
-            uplim=cut.max_value,
-            indices=all_ix,
+        # kept_ix = self.ix_inrange(
+        #     colnames=[column],
+        #     lowlim=min_value,
+        #     uplim=max_value,
+        #     indices=all_ix,
+        # )
+        # cut_ix = AnotB(all_ix, kept_ix)
+        cut_ix = self.ix_outrange(
+            colnames=[column], lowlim=min_value, uplim=max_value, indices=all_ix
         )
-        cut_ix = AnotB(all_ix, kept_ix)
 
-        self.update_mask_column(cut.flag, cut_ix)
+        self.update_mask_column(flag, cut_ix)
 
     def get_stdev_flux(self, indices=None):
         if self.t is None or self.t.empty:
@@ -298,17 +305,6 @@ class LightCurve(BaseLightCurve):
             verbose=verbose,
         )
 
-    def set(
-        self,
-        t: pd.DataFrame,
-        indices: Optional[List[int]] = None,
-        flux2mag_sigmalimit: float = 3.0,
-        deep: bool = True,
-    ):
-        super().set(
-            t, indices=indices, flux2mag_sigmalimit=flux2mag_sigmalimit, deep=deep
-        )
-
     def preprocess(self, flux2mag_sigmalimit=3.0):
         """
         Prepare the raw ATLAS light curve for cleaning
@@ -388,6 +384,59 @@ class LightCurve(BaseLightCurve):
         # recalculate SNR
         self.calculate_snr_col()
 
+    def flag_by_control_stats(
+        self,
+        flag: int = 0x400000,
+        questionable_flag: int = 0x80000,
+        x2_max: float = 2.5,
+        x2_flag: int = 0x100,
+        snr_max: float = 3.0,
+        snr_flag: int = 0x200,
+        Nclip_max: int = 2,
+        Nclip_flag: int = 0x400,
+        Ngood_min: int = 4,
+        Ngood_flag: int = 0x800,
+    ):
+        # flag SN measurements according to given bounds
+        flag_x2_ix = self.ix_inrange(
+            colnames=["c2_X2norm"], lowlim=x2_max, exclude_lowlim=True
+        )
+        flag_stn_ix = self.ix_inrange(
+            colnames=["c2_abs_stn"], lowlim=snr_max, exclude_lowlim=True
+        )
+        flag_nclip_ix = self.ix_inrange(
+            colnames=["c2_Nclip"], lowlim=Nclip_max, exclude_lowlim=True
+        )
+        flag_ngood_ix = self.ix_inrange(
+            colnames=["c2_Ngood"], uplim=Ngood_min, exclude_uplim=True
+        )
+        self.update_mask_column(x2_flag, flag_x2_ix)
+        self.update_mask_column(snr_flag, flag_stn_ix)
+        self.update_mask_column(Nclip_flag, flag_nclip_ix)
+        self.update_mask_column(Ngood_flag, flag_ngood_ix)
+
+        # update mask column with control light curve cut on any measurements flagged according to given bounds
+        zero_Nclip_ix = self.ix_equal("c2_Nclip", 0)
+        unmasked_ix = self.ix_unmasked(
+            self.colnames.mask,
+            maskval=x2_flag | snr_flag | Nclip_flag | Ngood_flag,
+        )
+        self.update_mask_column(questionable_flag, AnotB(unmasked_ix, zero_Nclip_ix))
+        self.update_mask_column(flag, AnotB(self.getindices(), unmasked_ix))
+
+    def copy_flags(self, flag_arr):
+        self.t[self.colnames.mask] = self.t[self.colnames.mask].astype(np.int32)
+        if len(self.t) < 1:
+            return
+        elif len(self.t) == 1:
+            self.t.at[0, self.colnames.mask] = (
+                int(self.t.at[0, self.colnames.mask]) | flag_arr
+            )
+        else:
+            self.t[self.colnames.mask] = np.bitwise_or(
+                self.t[self.colnames.mask], flag_arr
+            )
+
     def postprocess(self):
         """
         Prepare the cleaned light curve for SkyPortal by handling desired columnss
@@ -460,9 +509,17 @@ class BaseTransient:
     def get_sn(self) -> BaseLightCurve:
         return self.get(0)
 
+    def preprocess(self, flux2mag_sigmalimit: float = 3.0):
+        for i in self.lc_indices:
+            self.get(i).preprocess(flux2mag_sigmalimit=flux2mag_sigmalimit)
+
     @property
     def colnames(self):
         return self.get_sn().colnames
+
+    @property
+    def default_mjd_colname(self):
+        return self.get_sn().default_mjd_colname
 
     @property
     def num_controls(self):
@@ -487,12 +544,18 @@ class BaseTransient:
         for i in self.lcs:
             yield self.lcs[i]
 
-    def apply_cut(self, cut: Cut):
-        if not cut.can_apply_directly():
-            raise ValueError(f"Cannot apply this cut directly: {cut.name()}")
-
+    def apply_cut(
+        self,
+        column: str,
+        flag: int,
+        min_value: Optional[float] = None,
+        max_value: Optional[float] = None,
+        indices: Optional[List[int]] = None,
+    ):
         for i in self.lcs:
-            self.get(i).apply_cut(cut)
+            self.get(i).apply_cut(
+                column, flag, min_value=min_value, max_value=max_value, indices=indices
+            )
 
     def merge(self, other: Self) -> Self:
         """
@@ -552,6 +615,13 @@ class Transient(BaseTransient):
 
     def get(self, control_index: int) -> LightCurve:
         return super().get(control_index)
+
+    def get_sn(self) -> LightCurve:
+        return super().get_sn()
+
+    def preprocess(self, flux2mag_sigmalimit=3.0):
+        super().preprocess(flux2mag_sigmalimit=flux2mag_sigmalimit)
+        self.match_control_mjds()
 
     def match_control_mjds(self):
         """Make sure all control light curve MJDs exactly match SN MJDs"""
@@ -614,9 +684,13 @@ class Transient(BaseTransient):
 
         self.logger.success()
 
-    def get_uncert_est_stats(self, cut: UncertaintyEstimation) -> pd.DataFrame:
-        """Get the median uncertainty, standard deviation of the flux,
-        and sigma_extra for each control light curve."""
+    def get_uncert_est_stats(
+        self, temp_x2_max_value: float = 20, uncert_cut_flag: int = 0x2
+    ) -> pd.DataFrame:
+        """
+        Get a table containing the median uncertainty, standard deviation of the flux,
+        and sigma_extra for each control light curve.
+        """
 
         def get_sigma_extra(median_dflux, stdev):
             diff = stdev**2 - median_dflux**2
@@ -630,11 +704,11 @@ class Transient(BaseTransient):
 
         for i in self.control_lc_indices:
             dflux_clean_ix = self.get(i).ix_unmasked(
-                self.colnames.mask, maskval=cut.uncert_cut_flag
+                self.colnames.mask, maskval=uncert_cut_flag
             )
             x2_clean_ix = self.get(i).ix_inrange(
                 colnames=[self.colnames.chisquare],
-                uplim=cut.temp_x2_max_value,
+                uplim=temp_x2_max_value,
                 exclude_uplim=True,
             )
             clean_ix = AandB(dflux_clean_ix, x2_clean_ix)
@@ -661,9 +735,110 @@ class Transient(BaseTransient):
 
         return stats
 
-    def add_noise_to_dflux(self, sigma_extra):
+    def add_noise_to_dflux(self, sigma_extra: float):
+        """
+        Add sigma_extra to the SN and control light curves in quadrature.
+        """
         for i in self.lc_indices:
             self.get(i).add_noise_to_dflux(sigma_extra)
+
+    def calculate_control_stats(self, previous_flags: int):
+        self.logger.info("Calculating control light curve statistics")
+
+        len_mjd = len(self.get_sn().t[self.default_mjd_colname])
+
+        # construct arrays for control lc data
+        uJy = np.full((self.num_controls, len_mjd), np.nan)
+        duJy = np.full((self.num_controls, len_mjd), np.nan)
+        Mask = np.full((self.num_controls, len_mjd), 0, dtype=np.int32)
+
+        i = 1
+        for control_index in self.control_lc_indices:
+            if len(self.get(control_index).t) != len_mjd or not np.array_equal(
+                self.get_sn().t[self.default_mjd_colname],
+                self.get(control_index).t[self.default_mjd_colname],
+            ):
+                raise RuntimeError(
+                    f"SN light curve not equal to control light curve #{control_index}! Rerun or debug preprocessing."
+                )
+            else:
+                uJy[i - 1, :] = self.get(control_index).t[self.colnames.flux]
+                duJy[i - 1, :] = self.get(control_index).t[self.colnames.dflux]
+                Mask[i - 1, :] = self.get(control_index).t[self.colnames.mask]
+
+            i += 1
+
+        c2_param2columnmapping = self.get_sn().intializecols4statparams(
+            prefix="c2_", format4outvals="{:.2f}", skipparams=["converged", "i"]
+        )
+
+        for index in range(uJy.shape[-1]):
+            pda4MJD = pdastrostatsclass()
+            pda4MJD.t[self.colnames.flux] = uJy[0:, index]
+            pda4MJD.t[self.colnames.dflux] = duJy[0:, index]
+            pda4MJD.t[self.colnames.mask] = np.bitwise_and(
+                Mask[0:, index], previous_flags
+            )
+
+            pda4MJD.calcaverage_sigmacutloop(
+                self.colnames.flux,
+                noisecol=self.colnames.dflux,
+                maskcol=self.colnames.mask,
+                maskval=previous_flags,
+                verbose=1,
+                Nsigma=3.0,
+                median_firstiteration=True,
+            )
+            self.get_sn().statresults2table(
+                pda4MJD.statparams, c2_param2columnmapping, destindex=index
+            )
+
+        self.get_sn().t["c2_abs_stn"] = (
+            self.get_sn().t["c2_mean"] / self.get_sn().t["c2_mean_err"]
+        )
+        self.logger.success()
+
+    def flag_by_control_stats(
+        self,
+        flag: int = 0x400000,
+        questionable_flag: int = 0x80000,
+        x2_max: float = 2.5,
+        x2_flag: int = 0x100,
+        snr_max: float = 3.0,
+        snr_flag: int = 0x200,
+        Nclip_max: int = 2,
+        Nclip_flag: int = 0x400,
+        Ngood_min: int = 4,
+        Ngood_flag: int = 0x800,
+    ):
+        """
+        Use control light curve statistics to flag measurements
+        where control flux is inconsistent with 0.
+        """
+        # flag SN measurements
+        self.get_sn().flag_by_control_stats(
+            flag=flag,
+            questionable_flag=questionable_flag,
+            x2_max=x2_max,
+            x2_flag=x2_flag,
+            snr_max=snr_max,
+            snr_flag=snr_flag,
+            Nclip_max=Nclip_max,
+            Nclip_flag=Nclip_flag,
+            Ngood_min=Ngood_min,
+            Ngood_flag=Ngood_flag,
+        )
+
+        # copy over SN mask column to control light curve mask columns
+        flags_arr = np.full(
+            self.get_sn().t[self.colnames.mask].shape,
+            combine_flags(
+                [flag, questionable_flag, x2_flag, snr_flag, Nclip_flag, Ngood_flag]
+            ),
+        )
+        flags_to_copy = np.bitwise_and(self.get_sn().t[self.colnames.mask], flags_arr)
+        for i in self.control_lc_indices:
+            self.get(i).copy_flags(flags_to_copy)
 
     def postprocess(self):
         if self.filt is not None:
