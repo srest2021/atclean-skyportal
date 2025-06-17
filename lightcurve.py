@@ -10,16 +10,20 @@ from utils import (
     BinnedColumnNames,
     CleanedColumnNames,
     ColumnNames,
-    ControlLightCurveCut,
     Coordinates,
     CustomLogger,
-    Cut,
-    UncertaintyEstimation,
     combine_flags,
 )
 
 
 class BaseLightCurve(pdastrostatsclass):
+    """
+    Base class for representing and manipulating a single light curve.
+
+    Provides methods for masking, flagging, filtering, merging, and basic statistics
+    on light curve data, as well as utilities for handling different filters and cuts.
+    """
+
     def __init__(
         self,
         control_index: int,
@@ -28,6 +32,22 @@ class BaseLightCurve(pdastrostatsclass):
         filt: Optional[str] = None,
         verbose: bool = False,
     ):
+        """
+        Initialize a BaseLightCurve instance.
+
+        Parameters
+        ----------
+        control_index : int
+            Index identifying the control light curve (0 if it's the SN).
+        coords : Coordinates
+            Object containing coordinate information (RA, Dec) for the light curve.
+        colnames : ColumnNames
+            Object containing column name mappings.
+        filt : str, optional
+            Filter name (e.g., 'o' or 'c'). If None, includes all filters.
+        verbose : bool, optional
+            If True, enables verbose logging.
+        """
         super().__init__()
         self.logger = CustomLogger(verbose=verbose)
         self.control_index = control_index
@@ -41,6 +61,18 @@ class BaseLightCurve(pdastrostatsclass):
         indices: Optional[List[int]] = None,
         deep: bool = True,
     ):
+        """
+        Set the internal data table for the light curve.
+
+        Parameters
+        ----------
+        t : pd.DataFrame
+            DataFrame containing light curve data.
+        indices : list of int, optional
+            Indices to select from the DataFrame. If None, use all rows.
+        deep : bool, optional
+            If True, perform a deep copy of the data.
+        """
         if t is None:
             self.t = pd.DataFrame()
             return
@@ -58,9 +90,23 @@ class BaseLightCurve(pdastrostatsclass):
 
     @property
     def default_mjd_colname(self):
+        """
+        Return the default column name for MJD (time).
+        Will be "mjdbin" for BinnedLightCurve but "mjd" here and everywhere else.
+
+        Returns
+        -------
+        str
+            The column name for MJD.
+        """
         return self.colnames.mjd
 
     def preprocess(self, **kwargs):
+        """
+        Preprocess the light curve data.
+
+        Calculates the SNR column.
+        """
         if self.t is None or self.t.empty:
             return
 
@@ -68,6 +114,19 @@ class BaseLightCurve(pdastrostatsclass):
         self.calculate_snr_col()
 
     def get_filt_ix(self, filt: str):
+        """
+        Get indices of rows matching a specific filter.
+
+        Parameters
+        ----------
+        filt : str
+            Filter name to select (e.g., 'o' or 'c').
+
+        Returns
+        -------
+        list of int
+            Indices of rows with the specified filter.
+        """
         if self.t is None or self.t.empty:
             return []
 
@@ -80,12 +139,28 @@ class BaseLightCurve(pdastrostatsclass):
         return self.ix_equal(self.colnames.filter, filt)
 
     def get_filt_lens(self) -> tuple[int, int]:
+        """
+        Get the number of rows for each filter ('o' and 'c').
+
+        Returns
+        -------
+        tuple of int
+            Number of rows for filters 'o' and 'c', respectively.
+        """
         if self.t is None:
             raise RuntimeError("Table (self.t) cannot be None")
 
         return len(self.get_filt_ix("o")), len(self.get_filt_ix("c"))
 
     def get_flags(self) -> int:
+        """
+        Get the bitwise OR of all mask flags in the light curve.
+
+        Returns
+        -------
+        int
+            Combined mask flags for all rows.
+        """
         if self.t is None or self.t.empty or self.colnames.mask not in self.t.columns:
             return 0
 
@@ -94,9 +169,18 @@ class BaseLightCurve(pdastrostatsclass):
     def get_good_indices(self, flag: Optional[int] = None) -> List[int]:
         """
         Return the list of indices corresponding to "good" (unmasked) rows.
-
         A row is considered "good" if its value in the mask column does not contain
-        the specified `flag`. If `flag` is 0 or None, all unmasked rows will be returned.
+        the specified flag.
+
+        Parameters
+        ----------
+        flag : int, optional
+            Bitmask flag to check. If None or 0, returns all unmasked rows.
+
+        Returns
+        -------
+        list of int
+            Indices of good rows.
         """
         if self.t is None or self.t.empty:
             return []
@@ -113,9 +197,18 @@ class BaseLightCurve(pdastrostatsclass):
     def get_bad_indices(self, flag: Optional[int] = None) -> List[int]:
         """
         Return the list of indices corresponding to "bad" (masked) rows.
-
         A row is considered "bad" if its value in the mask column contains
-        the specified `flag`. If `flag` is 0 or None, all masked rows will be returned.
+        the specified flag.
+
+        Parameters
+        ----------
+        flag : int, optional
+            Bitmask flag to check. If None or 0, returns all masked rows.
+
+        Returns
+        -------
+        list of int
+            Indices of bad rows.
         """
         if self.t is None or self.t.empty:
             return []
@@ -129,15 +222,40 @@ class BaseLightCurve(pdastrostatsclass):
         # note: if flag is None, this will just return all masked indices
         return self.ix_masked(self.colnames.mask, maskval=flag)
 
-    def remove_flag(self, flag):
+    def remove_flag(self, flag: int, indices: Optional[List[int]] = None):
+        """
+        Remove a specific flag from the mask column for the given rows.
+
+        Parameters
+        ----------
+        flag : int
+            Bitmask flag to remove.
+        indices : list[int], optional
+            List of row indices to update. If None, the flag is removed from all rows.
+        """
         if self.t is None or self.t.empty or self.colnames.mask not in self.t.columns:
             return
 
-        self.t[self.colnames.mask] = np.bitwise_and(
-            self.t[self.colnames.mask].astype(int), ~flag
+        indices = self.getindices(indices)
+        self.t.loc[indices, self.colnames.mask] = np.bitwise_and(
+            self.t.loc[indices, self.colnames.mask].astype(int), ~flag
         )
 
-    def update_mask_column(self, flag, indices, remove_old=True):
+    def update_mask_column(
+        self, flag, indices: Optional[List[int]] = None, remove_old: bool = True
+    ):
+        """
+        Update the mask column for specified indices by adding a flag.
+
+        Parameters
+        ----------
+        flag : int
+            Bitmask flag to add.
+        indices : list of int
+            Indices to update.
+        remove_old : bool, optional
+            If True, remove the flag from all rows before adding it to the specified indices.
+        """
         if self.t is None or self.t.empty:
             return
 
@@ -166,6 +284,22 @@ class BaseLightCurve(pdastrostatsclass):
         max_value: Optional[float] = None,
         indices: Optional[List[int]] = None,
     ):
+        """
+        Apply a value-based cut to a column, masking out-of-range data.
+
+        Parameters
+        ----------
+        column : str
+            Name of the column to cut on.
+        flag : int
+            Bitmask flag to apply to masked data.
+        min_value : float, optional
+            Minimum allowed value (inclusive).
+        max_value : float, optional
+            Maximum allowed value (inclusive).
+        indices : list of int, optional
+            Indices to consider for the cut. If None, all indices are used.
+        """
         if self.t is None or self.t.empty:
             return
 
@@ -175,13 +309,6 @@ class BaseLightCurve(pdastrostatsclass):
             )
 
         all_ix = self.getindices(indices)
-        # kept_ix = self.ix_inrange(
-        #     colnames=[column],
-        #     lowlim=min_value,
-        #     uplim=max_value,
-        #     indices=all_ix,
-        # )
-        # cut_ix = AnotB(all_ix, kept_ix)
         cut_ix = self.ix_outrange(
             colnames=[column], lowlim=min_value, uplim=max_value, indices=all_ix
         )
@@ -189,6 +316,19 @@ class BaseLightCurve(pdastrostatsclass):
         self.update_mask_column(flag, cut_ix)
 
     def get_stdev_flux(self, indices=None):
+        """
+        Calculate the standard deviation of the flux column, optionally for a subset of indices.
+
+        Parameters
+        ----------
+        indices : list of int, optional
+            Indices to use for the calculation. If None, use all rows.
+
+        Returns
+        -------
+        float
+            Standard deviation of the flux.
+        """
         if self.t is None or self.t.empty:
             return np.nan
 
@@ -198,6 +338,19 @@ class BaseLightCurve(pdastrostatsclass):
         return self.statparams["stdev"]
 
     def get_median_dflux(self, indices=None):
+        """
+        Calculate the median uncertainty (dflux), optionally for a subset of indices.
+
+        Parameters
+        ----------
+        indices : list of int, optional
+            Indices to use for the calculation. If None, use all rows.
+
+        Returns
+        -------
+        float
+            Median value of the dflux column.
+        """
         if self.t is None or self.t.empty or (indices is not None and len(indices) < 1):
             return np.nan
         if indices is None:
@@ -205,6 +358,9 @@ class BaseLightCurve(pdastrostatsclass):
         return np.nanmedian(self.t.loc[indices, self.colnames.dflux])
 
     def calculate_snr_col(self):
+        """
+        Calculate the SNR column as flux/dflux and replace infs with NaNs.
+        """
         if self.t is None or self.t.empty:
             return
 
@@ -223,6 +379,16 @@ class BaseLightCurve(pdastrostatsclass):
         Merge this LightCurve with another one and return a new LightCurve instance
         with the combined and sorted data. Used for merging two light curves with
         different filters together.
+
+        Parameters
+        ----------
+        other : BaseLightCurve
+            Another light curve to merge with.
+
+        Returns
+        -------
+        BaseLightCurve
+            New instance with merged and sorted data.
         """
         if not isinstance(other, BaseLightCurve):
             raise TypeError("Can only merge with another BaseLightCurve instance.")
@@ -259,8 +425,13 @@ class BaseLightCurve(pdastrostatsclass):
 
     def split_by_filt(self) -> tuple[Self, Self]:
         """
-        Create two new class instances for filters 'o' and 'c'.
+        Split the light curve into two new instances for filters 'o' and 'c'.
         Underlying dataframes are deepcopied and independent of self.
+
+        Returns
+        -------
+        tuple
+            Two new BaseLightCurve instances for filters 'o' and 'c'.
         """
         if self.colnames.filter not in self.t.columns:
             raise RuntimeError(
@@ -290,6 +461,14 @@ class BaseLightCurve(pdastrostatsclass):
 
 
 class LightCurve(BaseLightCurve):
+    """
+    Class for representing and cleaning an ATLAS light curve.
+
+    Inherits from BaseLightCurve and provides additional methods for
+    preprocessing, uncertainty handling, flagging, and preparing data
+    for SkyPortal ingestion.
+    """
+
     def __init__(
         self,
         control_index: int,
@@ -297,6 +476,20 @@ class LightCurve(BaseLightCurve):
         filt: Optional[str] = None,
         verbose: bool = False,
     ):
+        """
+        Initialize a LightCurve instance.
+
+        Parameters
+        ----------
+        control_index : int
+            Index identifying the control light curve.
+        coords : Coordinates
+            Object containing coordinate information for the light curve.
+        filt : str, optional
+            Filter name (e.g., 'o' or 'c'). If None, includes all filters.
+        verbose : bool, optional
+            If True, enables verbose logging.
+        """
         super().__init__(
             control_index,
             coords,
@@ -307,8 +500,15 @@ class LightCurve(BaseLightCurve):
 
     def preprocess(self, flux2mag_sigmalimit=3.0):
         """
-        Prepare the raw ATLAS light curve for cleaning
-        (add mask column, sort by MJD, remove rows with duJy=0 or uJy=NaN, overwrite ATLAS magnitudes with our own)
+        Prepare the raw ATLAS light curve for cleaning.
+
+        Adds a mask column if missing, sorts by MJD, removes rows with duJy=0 or uJy=NaN,
+        and overwrites ATLAS magnitudes with calculated values.
+
+        Parameters
+        ----------
+        flux2mag_sigmalimit : float, optional
+            Sigma limit for converting flux to magnitude (default: 3.0).
         """
         if self.t is None or self.t.empty:
             return
@@ -350,7 +550,12 @@ class LightCurve(BaseLightCurve):
 
     def add_noise_to_dflux(self, sigma_extra):
         """
-        Add sigma_extra to the dflux column in quadrature.
+        Add additional noise in quadrature to the dflux column.
+
+        Parameters
+        ----------
+        sigma_extra : float
+            Value to add in quadrature to the dflux column.
         """
         # add in quadrature to dflux column
         self.t[self.colnames.dflux] = np.sqrt(
@@ -397,6 +602,35 @@ class LightCurve(BaseLightCurve):
         Ngood_min: int = 4,
         Ngood_flag: int = 0x800,
     ):
+        """
+        Flag light curve measurements based on control statistics.
+
+        Parameters
+        ----------
+        flag : int, optional
+            Bitmask flag for bad data (default: 0x400000).
+        questionable_flag : int, optional
+            Bitmask flag for questionable data (default: 0x80000).
+
+        The following max values and their corresponding flags are used in reference to the statistics returned from the 3-sigma clipping on a single epoch across controls.
+
+        x2_max : float, optional
+            Maximum allowed chi-square value (default: 2.5).
+        x2_flag : int, optional
+            Bitmask flag for chi-square cut (default: 0x100).
+        snr_max : float, optional
+            Maximum allowed SNR (default: 3.0).
+        snr_flag : int, optional
+            Bitmask flag for SNR cut (default: 0x200).
+        Nclip_max : int, optional
+            Maximum allowed number of clipped points (default: 2).
+        Nclip_flag : int, optional
+            Bitmask flag for Nclip cut (default: 0x400).
+        Ngood_min : int, optional
+            Minimum number of good points required (default: 4).
+        Ngood_flag : int, optional
+            Bitmask flag for Ngood cut (default: 0x800).
+        """
         # flag SN measurements according to given bounds
         flag_x2_ix = self.ix_inrange(
             colnames=["c2_X2norm"], lowlim=x2_max, exclude_lowlim=True
@@ -425,6 +659,14 @@ class LightCurve(BaseLightCurve):
         self.update_mask_column(flag, AnotB(self.getindices(), unmasked_ix))
 
     def copy_flags(self, flag_arr):
+        """
+        Copy flag values into the mask column for all rows.
+
+        Parameters
+        ----------
+        flag_arr : array-like
+            Flag(s) to apply to the mask column.
+        """
         self.t[self.colnames.mask] = self.t[self.colnames.mask].astype(np.int32)
         if len(self.t) < 1:
             return
@@ -439,7 +681,10 @@ class LightCurve(BaseLightCurve):
 
     def postprocess(self):
         """
-        Prepare the cleaned light curve for SkyPortal by handling desired columnss
+        Prepare the cleaned light curve for SkyPortal ingestion.
+
+        Renames columns, drops unnecessary columns, updates filter names,
+        and adds optional columns for SkyPortal compatibility.
         """
         # convert column names
         update_cols_dict = {
@@ -556,6 +801,10 @@ class BaseTransient:
             self.get(i).apply_cut(
                 column, flag, min_value=min_value, max_value=max_value, indices=indices
             )
+
+    def remove_flag(self, flag: int):
+        for i in self.lc_indices:
+            self.get(i).remove_flag(flag)
 
     def merge(self, other: Self) -> Self:
         """
