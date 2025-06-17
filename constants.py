@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-CTRL_COORDINATES_COLNAMES = [
+CTRL_COORDINATES_TABLE_COLNAMES = [
     "tnsname",
     "control_index",
     "ra",
@@ -13,7 +13,7 @@ CTRL_COORDINATES_COLNAMES = [
     "n_detec_o",
 ]
 
-LIMCUTS_COLNAMES = [
+CHISQUARECUTS_TABLE_COLNAMES = [
     "PSF Chi-Square Cut",
     "N",
     "Ngood",

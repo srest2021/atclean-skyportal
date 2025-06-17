@@ -13,7 +13,7 @@ from astropy import units as u
 from astropy.coordinates import Angle, SkyCoord
 from astropy.time import Time
 
-from constants import CTRL_COORDINATES_COLNAMES, ATLAS_API_COLNAMES
+from constants import CTRL_COORDINATES_TABLE_COLNAMES, ATLAS_API_COLNAMES
 from lightcurve import LightCurve, Transient
 from utils import Coordinates, CustomLogger, new_row
 
