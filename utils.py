@@ -11,7 +11,7 @@ import re, json, requests, time, sys, io, os
 from astropy import units as u
 from astropy.coordinates import Angle, SkyCoord
 from astropy.time import Time
-from collections import OrderedDict
+from collections import OrderedDict, namedtuple
 import numpy as np
 import pandas as pd
 from copy import deepcopy
@@ -258,3 +258,21 @@ class BinnedColumnNames(ColumnNames):
         super().__init__(
             required_colnames=required_colnames, optional_colnames=optional_colnames
         )
+
+
+def nan_if_none(x):
+    return x if x is not None else np.nan
+
+
+class StatParams:
+    def __init__(self, statparams: Dict[str, int | float | None]):
+        statparams = deepcopy(statparams)
+        self.mean: float = nan_if_none(statparams["mean"])
+        self.mean_err: float = nan_if_none(statparams["mean_err"])
+        self.stdev: float = nan_if_none(statparams["stdev"])
+        self.X2norm: float = nan_if_none(statparams["X2norm"])
+        self.Nclip: int | float = nan_if_none(statparams["Nclip"])
+        self.Ngood: int | float = nan_if_none(statparams["Ngood"])
+        # self.Nexcluded: int | float = nan_if_none(statparams["Nexcluded"])
+        self.ix_good: List[int] = list(statparams["ix_good"])
+        self.ix_clip: List[int] = list(statparams["ix_clip"])
