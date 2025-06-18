@@ -1194,7 +1194,7 @@ class BinnedLightCurve(BaseLightCurve):
             )
 
             if len(flux_statparams.ix_clip) > 0:
-                self.update_mask_column(
+                lc.update_mask_column(
                     ixclip_flag, indices=flux_statparams.ix_clip, remove_old=False
                 )
 
