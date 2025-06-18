@@ -377,7 +377,7 @@ class BaseLightCurve(pdastrostatsclass):
             self.t[self.colnames.flux] / self.t[self.colnames.dflux]
         )
 
-    def _get_average_flux(self, indices=None, verbose: bool = False) -> StatParams:
+    def _get_average_flux(self, indices=None) -> StatParams:
         self.calcaverage_sigmacutloop_np(
             self.t[self.colnames.flux].values,
             self.colnames.flux,
@@ -386,18 +386,16 @@ class BaseLightCurve(pdastrostatsclass):
             indices=indices,
             Nsigma=3.0,
             median_firstiteration=True,
-            verbose=3 if verbose else 0,
         )
         return StatParams(self.statparams)
 
-    def _get_average_mjd(self, indices=None, verbose: bool = False) -> float:
+    def _get_average_mjd(self, indices=None) -> float:
         self.calcaverage_sigmacutloop_np(
             self.t[self.default_mjd_colname].values,
             self.default_mjd_colname,
             indices=indices,
             Nsigma=0,
             median_firstiteration=False,
-            verbose=3 if verbose else 0,
         )
         return StatParams(self.statparams).mean
 
@@ -1084,6 +1082,7 @@ class BinnedLightCurve(BaseLightCurve):
         super().__init__(
             control_index, coords, BinnedColumnNames(), filt=filt, verbose=verbose
         )
+        self.mjd_bin_size = None
 
     @property
     def default_mjd_colname(self):
@@ -1098,11 +1097,11 @@ class BinnedLightCurve(BaseLightCurve):
         x2_max: float = 4.0,
         Nclip_max: int = 1,
         Ngood_min: int = 2,
-        ixclip_flag: int = 0x1000,  # TODO: debug
+        ixclip_flag: int = 0x1000,
         smallnum_flag: int = 0x2000,
         flux2mag_sigmalimit=3.0,
-        verbose: bool = False,
     ):
+        self.mjd_bin_size = mjd_bin_size
         self.t = pd.DataFrame(columns=list(self.colnames.all))
         if lc.t is None or lc.t.empty:
             return
@@ -1151,8 +1150,12 @@ class BinnedLightCurve(BaseLightCurve):
 
             # if no good measurements, average values anyway and flag
             if len(good_bin_ix) == 0:
-                flux_statparams = lc._get_average_flux(indices=bin_ix, verbose=verbose)
-                avg_mjd = lc._get_average_mjd(indices=bin_ix, verbose=verbose)
+                flux_statparams = lc._get_average_flux(
+                    indices=bin_ix,
+                )
+                avg_mjd = lc._get_average_mjd(
+                    indices=bin_ix,
+                )
                 self.add2row(
                     cur_index,
                     {
@@ -1169,15 +1172,13 @@ class BinnedLightCurve(BaseLightCurve):
                 lc.update_mask_column(flag, indices=bin_ix, remove_old=False)
                 continue
 
-            flux_statparams = lc._get_average_flux(indices=good_bin_ix, verbose=verbose)
+            flux_statparams = lc._get_average_flux(indices=good_bin_ix)
             if np.isnan(flux_statparams.mean) or len(flux_statparams.ix_good) < 1:
                 lc.update_mask_column(flag, indices=bin_ix, remove_old=False)
                 self.update_mask_column(flag, indices=[cur_index], remove_old=False)
                 continue
 
-            avg_mjd = lc._get_average_mjd(
-                indices=flux_statparams.ix_good, verbose=verbose
-            )
+            avg_mjd = lc._get_average_mjd(indices=flux_statparams.ix_good)
 
             self.add2row(
                 cur_index,
@@ -1598,3 +1599,19 @@ class BinnedTransient(BaseTransient):
 
     def get(self, control_index: int) -> BinnedLightCurve:
         return super().get(control_index)
+
+    def update_from_Transient(
+        self,
+        transient: Transient,
+        lc: LightCurve,
+        previous_flags: int,
+        flag: int = 0x800000,
+        mjd_bin_size: float = 1.0,
+        x2_max: float = 4.0,
+        Nclip_max: int = 1,
+        Ngood_min: int = 2,
+        ixclip_flag: int = 0x1000,
+        smallnum_flag: int = 0x2000,
+        flux2mag_sigmalimit=3.0,
+    ):
+        pass
