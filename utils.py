@@ -158,6 +158,10 @@ class ColumnNames:
     def optional(self) -> Set:
         return set(self._optional_colnames.values())
 
+    @property
+    def all(self) -> Set:
+        return self.required.union(self.optional)
+
     def add(
         self, key: str, name: str, is_required: bool = False, overwrite: bool = False
     ):
@@ -223,6 +227,22 @@ class ColumnNames:
             f"'{self.__class__.__name__}' object has no attribute '{name}'"
         )
 
+    def __str__(self) -> str:
+        """Readable string representation of all column names."""
+        skip_colnames = ["mjdbin", "fdf", "mask"]
+
+        lines = ["-- Required Columns --"]
+        for k, v in self._required_colnames.items():
+            if k in skip_colnames:
+                continue
+            lines.append(f"{k}: {v}")
+
+        lines.append("-- Optional Columns --")
+        for k, v in self._optional_colnames.items():
+            lines.append(f"{k}: {v}")
+
+        return "\n".join(lines)
+
 
 class CleanedColumnNames(ColumnNames):
     def __init__(self):
@@ -251,10 +271,18 @@ class BinnedColumnNames(ColumnNames):
             "mjd": "MJD",
             "flux": "flux",
             "dflux": "dflux",
+            "mag": "m",
+            "dmag": "dm",
             "filter": "F",
             "mask": "Mask",
         }
-        optional_colnames = {}
+        optional_colnames = {
+            "stdev": "stdev",
+            "x2": "X2norm",
+            "nclip": "Nclip",
+            "ngood": "Ngood",
+            "nexcluded": "Nexcluded",
+        }
         super().__init__(
             required_colnames=required_colnames, optional_colnames=optional_colnames
         )

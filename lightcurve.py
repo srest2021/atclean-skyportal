@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 from copy import deepcopy
+import sys
 from typing import Dict, List, Optional, Self
 from astropy.nddata import bitmask
 
@@ -376,25 +377,27 @@ class BaseLightCurve(pdastrostatsclass):
             self.t[self.colnames.flux] / self.t[self.colnames.dflux]
         )
 
-    def _get_average_flux(self, indices=None) -> StatParams:
+    def _get_average_flux(self, indices=None, verbose: bool = False) -> StatParams:
         self.calcaverage_sigmacutloop_np(
             self.t[self.colnames.flux].values,
             self.colnames.flux,
             noise_arr=self.t[self.colnames.dflux].values,
-            noisecol=self.colnames.dflux,
+            noise_colname=self.colnames.dflux,
             indices=indices,
             Nsigma=3.0,
             median_firstiteration=True,
+            verbose=3 if verbose else 0,
         )
         return StatParams(self.statparams)
 
-    def _get_average_mjd(self, indices=None) -> float:
+    def _get_average_mjd(self, indices=None, verbose: bool = False) -> float:
         self.calcaverage_sigmacutloop_np(
             self.t[self.default_mjd_colname].values,
             self.default_mjd_colname,
             indices=indices,
             Nsigma=0,
             median_firstiteration=False,
+            verbose=3 if verbose else 0,
         )
         return StatParams(self.statparams).mean
 
@@ -590,11 +593,13 @@ class BaseLightCurve(pdastrostatsclass):
         if indices is None:
             indices = np.arange(len(mask_arr))
 
+        sub_mask = mask_arr[indices]
+
         if maskval is None:
-            keep = mask_arr == 0
+            keep = sub_mask == 0
         else:
             keep = bitmask.bitfield_to_boolean_mask(
-                mask_arr.astype(int),
+                sub_mask.astype(int),
                 ignore_flags=~maskval,
                 good_mask_value=True,
             )
@@ -608,7 +613,7 @@ class BaseLightCurve(pdastrostatsclass):
         keep_mask = np.ones(len(indices), dtype=bool)
         for colname in colnames:
             col_vals = self.t[colname].values[indices]
-            keep_mask &= pd.notnull(col_vals).to_numpy()
+            keep_mask &= pd.notnull(col_vals)
 
         return indices[keep_mask]
 
@@ -1093,16 +1098,17 @@ class BinnedLightCurve(BaseLightCurve):
         x2_max: float = 4.0,
         Nclip_max: int = 1,
         Ngood_min: int = 2,
-        ixclip_flag: int = 0x1000,
+        ixclip_flag: int = 0x1000,  # TODO: debug
         smallnum_flag: int = 0x2000,
         flux2mag_sigmalimit=3.0,
+        verbose: bool = False,
     ):
-        self.t = pd.DataFrame(columns=list(self.colnames.required))
+        self.t = pd.DataFrame(columns=list(self.colnames.all))
         if lc.t is None or lc.t.empty:
             return
 
         mjd_arr = lc.t[lc.colnames.mjd].values
-        mask_arr = lc.t[lc.colnames.mask].values
+        mask_arr = lc.t[lc.colnames.mask].values.astype(int)
 
         mjd_min = np.floor(mjd_arr.min())
         mjd_max = np.ceil(mjd_arr.max())
@@ -1117,7 +1123,7 @@ class BinnedLightCurve(BaseLightCurve):
         for b in range(len(bins) - 1):
             bin_ix = np.where(bin_indices == b)[0]
 
-            # if no measurements present, flag or skip over day
+            # if no measurements present, flag and skip over day
             if len(bin_ix) < 1:
                 cur_index = self.newrow(
                     {
@@ -1130,7 +1136,9 @@ class BinnedLightCurve(BaseLightCurve):
                 )
                 continue
 
-            good_bin_ix = self.ix_unmasked_np(mask_arr, previous_flags, indices=bin_ix)
+            good_bin_ix = self.ix_unmasked_np(
+                mask_arr, maskval=previous_flags, indices=bin_ix
+            )
             cur_index = self.newrow(
                 {
                     self.colnames.mjdbin: bins[b] + 0.5 * mjd_bin_size,
@@ -1143,8 +1151,8 @@ class BinnedLightCurve(BaseLightCurve):
 
             # if no good measurements, average values anyway and flag
             if len(good_bin_ix) == 0:
-                flux_statparams = lc._get_average_flux(indices=bin_ix)
-                avg_mjd = lc._get_average_mjd(indices=bin_ix)
+                flux_statparams = lc._get_average_flux(indices=bin_ix, verbose=verbose)
+                avg_mjd = lc._get_average_mjd(indices=bin_ix, verbose=verbose)
                 self.add2row(
                     cur_index,
                     {
@@ -1161,14 +1169,15 @@ class BinnedLightCurve(BaseLightCurve):
                 lc.update_mask_column(flag, indices=bin_ix, remove_old=False)
                 continue
 
-            flux_statparams = lc._get_average_flux(indices=good_bin_ix)
-
+            flux_statparams = lc._get_average_flux(indices=good_bin_ix, verbose=verbose)
             if np.isnan(flux_statparams.mean) or len(flux_statparams.ix_good) < 1:
                 lc.update_mask_column(flag, indices=bin_ix, remove_old=False)
                 self.update_mask_column(flag, indices=[cur_index], remove_old=False)
                 continue
 
-            avg_mjd = lc._get_average_mjd(indices=flux_statparams.ix_good)
+            avg_mjd = lc._get_average_mjd(
+                indices=flux_statparams.ix_good, verbose=verbose
+            )
 
             self.add2row(
                 cur_index,
@@ -1215,6 +1224,10 @@ class BinnedLightCurve(BaseLightCurve):
             zpt=23.9,
             upperlim_Nsigma=flux2mag_sigmalimit,
         )
+        if "__tmp_SN" in self.t.columns:
+            self.t.drop(columns=["__tmp_SN"], inplace=True)
+
+        return lc
 
 
 class BaseTransient:
