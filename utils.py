@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 import bisect
 from configparser import ConfigParser
 import configparser
+from datetime import datetime
 from functools import reduce
 from getpass import getpass
 from typing import Callable, Dict, Any, List, Optional, Self, Set, Tuple, Type
@@ -301,6 +302,135 @@ class StatParams:
         self.X2norm: float = nan_if_none(statparams["X2norm"])
         self.Nclip: int | float = nan_if_none(statparams["Nclip"])
         self.Ngood: int | float = nan_if_none(statparams["Ngood"])
-        # self.Nexcluded: int | float = nan_if_none(statparams["Nexcluded"])
         self.ix_good: List[int] = list(statparams["ix_good"])
         self.ix_clip: List[int] = list(statparams["ix_clip"])
+
+
+class PrimaryFlag:
+    def __init__(
+        self,
+        name: str,
+        value: int,
+        description: Optional[str] = None,
+    ):
+        self.name = name
+        self.description = description
+        self.value = value
+        self._is_primary = True
+
+    @property
+    def hex(self):
+        return hex(self.value)
+
+    def __str__(self):
+        return f"'{self.name}' {'primary' if self._is_primary else 'secondary'} flag ({self.hex}): {self.description}"
+
+
+class Flag(PrimaryFlag):
+    def __init__(self, name, value, description=None):
+        super().__init__(name, value, description)
+        self._is_primary = False
+
+
+class Cut:
+    def __init__(
+        self,
+        name: str,
+        primary_flag: Optional[PrimaryFlag] = None,
+        secondary_flags: Optional[List[Flag]] = None,
+        description: Optional[str] = None,
+        verbose: bool = False,
+    ):
+        self.name = name
+        self.description: Optional[str] = description
+        self._primary_flag: Optional[PrimaryFlag] = primary_flag
+        self._secondary_flags: Dict[str, Flag] = {
+            flag.name: flag for flag in secondary_flags
+        }
+
+        self.logger = CustomLogger(verbose=verbose)
+
+    @property
+    def primary_flag(self):
+        return self._primary_flag
+
+    def has_secondary_flag(self, name: str):
+        return name in self._secondary_flags
+
+    def add_flag(self, flag: Flag | PrimaryFlag):
+        if isinstance(flag, Flag):
+            if self.has_secondary_flag(flag.name):
+                self.logger.warning(
+                    f"Cut already has flag '{flag.name}'; overwriting..."
+                )
+            self._secondary_flags[flag.name] = flag
+        else:
+            if self.has_secondary_flag(flag.name):
+                raise ValueError(
+                    f"Cannot assign primary flag to name '{flag.name}' corresponding to existing secondary flag"
+                )
+            if self._primary_flag is not None:
+                self.logger.warning(f"Overwriting primary flag...")
+            self._primary_flag = flag
+
+    def remove_flag(self, name: str):
+        # TODO
+        pass
+
+    def get_flag(self, name: str):
+        if self._primary_flag is not None and name == self._primary_flag.name:
+            return self._primary_flag
+
+        if not self.has_secondary_flag(name):
+            raise ValueError(f"No such flag '{name}'")
+
+        return self._secondary_flags[name]
+
+    def get_combined_flags_value(self) -> int:
+        flags = [flag.value for flag in self._secondary_flags.values()]
+        if self._primary_flag is not None:
+            flags.append(self._primary_flag.value)
+        return combine_flags(flags)
+
+    def __str__(self):
+        out = [f"{self.name}{f': {self.description}' if self.description else ''}"]
+        if self._primary_flag is not None:
+            out.append("- " + self._primary_flag.__str__())
+        if self._secondary_flags:
+            for flag in self._secondary_flags.values():
+                out.append("- " + flag.__str__())
+        return "\n".join(out)
+
+
+class CutHistory:
+    def __init__(self, verbose: bool = False):
+        self._cuts: OrderedDict[str, Cut] = OrderedDict()
+        self.logger = CustomLogger(verbose=verbose)
+
+    def has(self, name: str):
+        return name in self._cuts
+
+    @property
+    def cuts(self):
+        """Return ordered list of applied cuts"""
+        return list(self._cuts.values())
+
+    def add(self, cut: Cut):
+        if cut.name in self._cuts:
+            self.logger.warning(f"Cut '{cut.name}' already exists; overwriting...")
+        self._cuts[cut.name] = cut
+
+    def remove(self, name: str):
+        if name in self._cuts:
+            del self._cuts[name]
+        else:
+            self.logger.warning(f"Cannot remove nonexistent cut '{name}'.")
+
+    def add_UncertaintyCut(self, value: int = 0x2):
+        flag = PrimaryFlag(
+            "high_uncertainty_flag",
+            f"measurement has an uncertainty above {value}",
+            value,
+        )
+        cut = Cut("Uncertainty Cut", primary_flag=flag)
+        self.add(cut)

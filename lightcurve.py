@@ -1088,6 +1088,125 @@ class BinnedLightCurve(BaseLightCurve):
     def default_mjd_colname(self):
         return self.colnames.mjdbin
 
+    def _compute_mjd_bins(self, mjd_arr, mjd_bin_size: float = 1.0):
+        mjd_min = np.floor(mjd_arr.min())
+        mjd_max = np.ceil(mjd_arr.max())
+        bins = np.arange(mjd_min, mjd_max + mjd_bin_size, mjd_bin_size)
+        bin_indices = np.digitize(mjd_arr, bins, right=False) - 1
+        return bins, bin_indices
+
+    def _process_bin(
+        self,
+        lc: LightCurve,
+        previous_flags: int,
+        mask_arr: np.ndarray,
+        bin_ix: np.ndarray,
+        bin_start: float,
+        flag: int = 0x800000,
+        mjd_bin_size: float = 1.0,
+        x2_max: float = 4.0,
+        Nclip_max: int = 1,
+        Ngood_min: int = 2,
+        ixclip_flag: int = 0x1000,
+        smallnum_flag: int = 0x2000,
+    ):
+        bin_center = bin_start + 0.5 * mjd_bin_size
+
+        # if no measurements present, flag and skip over day
+        if len(bin_ix) < 1:
+            cur_index = self.newrow(
+                {
+                    self.colnames.mjdbin: bin_center,
+                    self.colnames.nclip: 0,
+                    self.colnames.ngood: 0,
+                    self.colnames.nexcluded: 0,
+                    self.colnames.mask: flag,
+                }
+            )
+            return
+
+        good_bin_ix = self.ix_unmasked_np(
+            mask_arr, maskval=previous_flags, indices=bin_ix
+        )
+        cur_index = self.newrow(
+            {
+                self.colnames.mjdbin: bin_center,
+                self.colnames.nclip: 0,
+                self.colnames.ngood: 0,
+                self.colnames.nexcluded: len(bin_ix) - len(good_bin_ix),
+                self.colnames.mask: 0,
+            }
+        )
+
+        # if no good measurements, average values anyway and flag
+        if len(good_bin_ix) == 0:
+            flux_statparams = lc._get_average_flux(
+                indices=bin_ix,
+            )
+            avg_mjd = lc._get_average_mjd(
+                indices=bin_ix,
+            )
+            self.add2row(
+                cur_index,
+                {
+                    self.colnames.mjd: avg_mjd,
+                    self.colnames.flux: flux_statparams.mean,
+                    self.colnames.dflux: flux_statparams.mean_err,
+                    self.colnames.stdev: flux_statparams.stdev,
+                    self.colnames.x2: flux_statparams.X2norm,
+                    self.colnames.nclip: flux_statparams.Nclip,
+                    self.colnames.ngood: flux_statparams.Ngood,
+                    self.colnames.mask: flag,
+                },
+            )
+            lc.update_mask_column(flag, indices=bin_ix, remove_old=False)
+            return
+
+        flux_statparams = lc._get_average_flux(indices=good_bin_ix)
+        if np.isnan(flux_statparams.mean) or len(flux_statparams.ix_good) < 1:
+            lc.update_mask_column(flag, indices=bin_ix, remove_old=False)
+            self.update_mask_column(flag, indices=[cur_index], remove_old=False)
+            return
+
+        avg_mjd = lc._get_average_mjd(indices=flux_statparams.ix_good)
+
+        self.add2row(
+            cur_index,
+            {
+                self.colnames.mjd: avg_mjd,
+                self.colnames.flux: flux_statparams.mean,
+                self.colnames.dflux: flux_statparams.mean_err,
+                self.colnames.stdev: flux_statparams.stdev,
+                self.colnames.x2: flux_statparams.X2norm,
+                self.colnames.nclip: flux_statparams.Nclip,
+                self.colnames.ngood: flux_statparams.Ngood,
+                self.colnames.mask: 0,
+            },
+        )
+
+        if len(flux_statparams.ix_clip) > 0:
+            lc.update_mask_column(
+                ixclip_flag, indices=flux_statparams.ix_clip, remove_old=False
+            )
+
+        if len(good_bin_ix) < 3:
+            lc.update_mask_column(smallnum_flag, indices=bin_ix, remove_old=False)
+            self.update_mask_column(
+                smallnum_flag, indices=[cur_index], remove_old=False
+            )
+        else:
+            is_bad = (
+                flux_statparams.Ngood < Ngood_min
+                or flux_statparams.Nclip > Nclip_max
+                or (
+                    flux_statparams.X2norm is not None
+                    and flux_statparams.X2norm > x2_max
+                )
+            )
+            if is_bad:
+                lc.update_mask_column(flag, indices=bin_ix, remove_old=False)
+                self.update_mask_column(flag, indices=[cur_index], remove_old=False)
+
     def update_from_LightCurve(
         self,
         lc: LightCurve,
@@ -1108,11 +1227,7 @@ class BinnedLightCurve(BaseLightCurve):
 
         mjd_arr = lc.t[lc.colnames.mjd].values
         mask_arr = lc.t[lc.colnames.mask].values.astype(int)
-
-        mjd_min = np.floor(mjd_arr.min())
-        mjd_max = np.ceil(mjd_arr.max())
-        bins = np.arange(mjd_min, mjd_max + mjd_bin_size, mjd_bin_size)
-        bin_indices = np.digitize(mjd_arr, bins, right=False) - 1
+        bins, bin_indices = self._compute_mjd_bins(mjd_arr, mjd_bin_size)
 
         if self.control_index == 0:
             self.logger.info(f"Now averaging SN light curve")
@@ -1121,101 +1236,20 @@ class BinnedLightCurve(BaseLightCurve):
 
         for b in range(len(bins) - 1):
             bin_ix = np.where(bin_indices == b)[0]
-
-            # if no measurements present, flag and skip over day
-            if len(bin_ix) < 1:
-                cur_index = self.newrow(
-                    {
-                        self.colnames.mjdbin: bins[b] + 0.5 * mjd_bin_size,
-                        "Nclip": 0,
-                        "Ngood": 0,
-                        "Nexcluded": 0,
-                        self.colnames.mask: flag,
-                    }
-                )
-                continue
-
-            good_bin_ix = self.ix_unmasked_np(
-                mask_arr, maskval=previous_flags, indices=bin_ix
+            self._process_bin(
+                lc,
+                previous_flags,
+                mask_arr,
+                bin_ix,
+                bins[b],
+                flag=flag,
+                mjd_bin_size=mjd_bin_size,
+                x2_max=x2_max,
+                Nclip_max=Nclip_max,
+                Ngood_min=Ngood_min,
+                ixclip_flag=ixclip_flag,
+                smallnum_flag=smallnum_flag,
             )
-            cur_index = self.newrow(
-                {
-                    self.colnames.mjdbin: bins[b] + 0.5 * mjd_bin_size,
-                    "Nclip": 0,
-                    "Ngood": 0,
-                    "Nexcluded": len(bin_ix) - len(good_bin_ix),
-                    self.colnames.mask: 0,
-                }
-            )
-
-            # if no good measurements, average values anyway and flag
-            if len(good_bin_ix) == 0:
-                flux_statparams = lc._get_average_flux(
-                    indices=bin_ix,
-                )
-                avg_mjd = lc._get_average_mjd(
-                    indices=bin_ix,
-                )
-                self.add2row(
-                    cur_index,
-                    {
-                        self.colnames.mjd: avg_mjd,
-                        self.colnames.flux: flux_statparams.mean,
-                        self.colnames.dflux: flux_statparams.mean_err,
-                        "stdev": flux_statparams.stdev,
-                        "x2": flux_statparams.X2norm,
-                        "Nclip": flux_statparams.Nclip,
-                        "Ngood": flux_statparams.Ngood,
-                        self.colnames.mask: flag,
-                    },
-                )
-                lc.update_mask_column(flag, indices=bin_ix, remove_old=False)
-                continue
-
-            flux_statparams = lc._get_average_flux(indices=good_bin_ix)
-            if np.isnan(flux_statparams.mean) or len(flux_statparams.ix_good) < 1:
-                lc.update_mask_column(flag, indices=bin_ix, remove_old=False)
-                self.update_mask_column(flag, indices=[cur_index], remove_old=False)
-                continue
-
-            avg_mjd = lc._get_average_mjd(indices=flux_statparams.ix_good)
-
-            self.add2row(
-                cur_index,
-                {
-                    self.colnames.mjd: avg_mjd,
-                    self.colnames.flux: flux_statparams.mean,
-                    self.colnames.dflux: flux_statparams.mean_err,
-                    "stdev": flux_statparams.stdev,
-                    "x2": flux_statparams.X2norm,
-                    "Nclip": flux_statparams.Nclip,
-                    "Ngood": flux_statparams.Ngood,
-                    self.colnames.mask: 0,
-                },
-            )
-
-            if len(flux_statparams.ix_clip) > 0:
-                lc.update_mask_column(
-                    ixclip_flag, indices=flux_statparams.ix_clip, remove_old=False
-                )
-
-            if len(good_bin_ix) < 3:
-                lc.update_mask_column(smallnum_flag, indices=bin_ix, remove_old=False)
-                self.update_mask_column(
-                    smallnum_flag, indices=[cur_index], remove_old=False
-                )
-            else:
-                is_bad = (
-                    flux_statparams.Ngood < Ngood_min
-                    or flux_statparams.Nclip > Nclip_max
-                    or (
-                        flux_statparams.X2norm is not None
-                        and flux_statparams.X2norm > x2_max
-                    )
-                )
-                if is_bad:
-                    lc.update_mask_column(flag, indices=bin_ix, remove_old=False)
-                    self.update_mask_column(flag, indices=[cur_index], remove_old=False)
 
         self.flux2mag(
             self.colnames.flux,
