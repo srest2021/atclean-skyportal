@@ -438,7 +438,12 @@ class CutHistory:
     def add_UncertaintyEstimation(
         self, temp_x2_max_value: float = 20, uncert_cut_flag: int = 0x2
     ):
-        pass
+        cut = Cut(
+            "True Uncertainties Estimation",
+            description=f"We also attempt to account for an extra noise source in the data by estimating the true typical uncertainty, deriving the additional systematic uncertainty, and applying this extra noise to the uncertainty column. We also use a temporary, very high PSF chi-square cut value of {temp_x2_max_value} to eliminate the most egregious outliers from the data before estimating the true uncertainties.",
+            verbose=self.logger.verbose,
+        )
+        self.add(cut)
 
     def add_ChiSquareCut(self, flag: int = 0x1, max_value: float = 10):
         flag = PrimaryFlag(
@@ -499,9 +504,52 @@ class CutHistory:
 
         cut = Cut(
             "Control Light Curve Cut",
-            description="For a given SN epoch, we can calculate the 3σ-clipped average of the corresponding N control flux measurements falling within the same epoch. Given the expectation of control flux consistency with zero, the statistical properties accompanying the 3σ-clipped average enable us to identify problematic epochs.",
+            description="For a given SN epoch, we can calculate the 3sigma-clipped average of the corresponding N control flux measurements falling within the same epoch. Given the expectation of control flux consistency with zero, the statistical properties accompanying the 3sigma-clipped average enable us to identify problematic epochs.",
             primary_flag=primary_flag,
             secondary_flags=secondary_flags,
             verbose=self.logger.verbose,
         )
         self.add(cut)
+
+    def add_BadDayCut(
+        self,
+        flag: int = 0x800000,
+        mjd_bin_size: float = 1.0,
+        x2_max: float = 4.0,
+        Nclip_max: int = 1,
+        Ngood_min: int = 2,
+        ixclip_flag: int = 0x1000,
+        smallnum_flag: int = 0x2000,
+    ):
+        primary_flag = PrimaryFlag(
+            "bad_day",
+            flag,
+            description=f"binned epoch has chi-square higher than {x2_max}, number of clipped measurements higher than {Nclip_max}, number of good measurements lower than {Ngood_min}",
+        )
+
+        secondary_flags = [
+            Flag(
+                "large_num_clipped_flag",
+                ixclip_flag,
+                description=f"binned epoch had a nonzero number of measurements clipped during 3sigma-clipped average",
+            ),
+            Flag(
+                "small_num_unmasked_flag",
+                smallnum_flag,
+                description=f"binned epoch had 2 or less unmasked measurements passed to 3sigma-clipped average",
+            ),
+        ]
+
+        cut = Cut(
+            "Bad Day Cut (Binning)",
+            description=f"",
+            primary_flag=primary_flag,
+            secondary_flags=secondary_flags,
+            verbose=self.logger.verbose,
+        )
+        self.add(cut)
+
+    def __str__(self):
+        if not self._cuts:
+            return "CutHistory: no cuts applied."
+        return "CutHistory:\n" + "\n\n".join(str(cut) for cut in self._cuts.values())

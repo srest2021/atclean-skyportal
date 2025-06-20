@@ -1189,7 +1189,7 @@ class BinnedLightCurve(BaseLightCurve):
                 ixclip_flag, indices=flux_statparams.ix_clip, remove_old=False
             )
 
-        if len(good_bin_ix) < 3:
+        if len(good_bin_ix) < 3:  # TODO: un-hardcode this!
             lc.update_mask_column(smallnum_flag, indices=bin_ix, remove_old=False)
             self.update_mask_column(
                 smallnum_flag, indices=[cur_index], remove_old=False
@@ -1207,7 +1207,7 @@ class BinnedLightCurve(BaseLightCurve):
                 lc.update_mask_column(flag, indices=bin_ix, remove_old=False)
                 self.update_mask_column(flag, indices=[cur_index], remove_old=False)
 
-    def update_from_LightCurve(
+    def from_LightCurve(
         self,
         lc: LightCurve,
         previous_flags: int,
@@ -1634,10 +1634,9 @@ class BinnedTransient(BaseTransient):
     def get(self, control_index: int) -> BinnedLightCurve:
         return super().get(control_index)
 
-    def update_from_Transient(
+    def from_Transient(
         self,
         transient: Transient,
-        lc: LightCurve,
         previous_flags: int,
         flag: int = 0x800000,
         mjd_bin_size: float = 1.0,

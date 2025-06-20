@@ -363,6 +363,7 @@ class LightCurveCleaner:
     def apply_BadDayCut(
         self,
         transient: Transient,
+        previous_flags: int,
         flag: int = 0x800000,
         mjd_bin_size: float = 1.0,
         x2_max: float = 4.0,
@@ -370,6 +371,7 @@ class LightCurveCleaner:
         Ngood_min: int = 2,
         ixclip_flag: int = 0x1000,
         smallnum_flag: int = 0x2000,
+        flux2mag_sigmalimit: float = 3.0,
     ) -> tuple[Transient, BinnedTransient]:
         """
         Apply a "bad day" cut by binning data in time and flagging problematic bins.
@@ -382,6 +384,8 @@ class LightCurveCleaner:
             Bitmask flag for bad days (default: 0x800000).
         mjd_bin_size : float, optional
             Size of the time bin in MJD in days (default: 1.0).
+        flux2mag_sigmalimit : float, optional
+            The sigma limit used when converting flux to magnitude. Magnitudes are set as limits when their uncertainties are `NaN`.
 
         The following max values and flags are used in reference to the statistics returned from the 3-sigma clipping on a single time bin.
 
@@ -404,6 +408,18 @@ class LightCurveCleaner:
         # TODO
         binned_transient = BinnedTransient(
             filt=transient.filt, verbose=transient.logger.verbose
+        )
+        binned_transient.from_Transient(
+            transient,
+            previous_flags,
+            flag=flag,
+            mjd_bin_size=mjd_bin_size,
+            x2_max=x2_max,
+            Nclip_max=Nclip_max,
+            Ngood_min=Ngood_min,
+            ixclip_flag=ixclip_flag,
+            smallnum_flag=smallnum_flag,
+            flux2mag_sigmalimit=flux2mag_sigmalimit,
         )
 
         return transient, binned_transient
