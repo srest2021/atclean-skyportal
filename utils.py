@@ -424,13 +424,84 @@ class CutHistory:
         if name in self._cuts:
             del self._cuts[name]
         else:
-            self.logger.warning(f"Cannot remove nonexistent cut '{name}'.")
+            self.logger.warning(f"Cannot remove nonexistent cut '{name}'")
 
-    def add_UncertaintyCut(self, value: int = 0x2):
+    def add_UncertaintyCut(self, flag: int = 0x2, max_value: float = 160):
         flag = PrimaryFlag(
-            "high_uncertainty_flag",
-            f"measurement has an uncertainty above {value}",
-            value,
+            "high_uncertainty",
+            f"measurement has an uncertainty above {max_value}",
+            flag,
         )
-        cut = Cut("Uncertainty Cut", primary_flag=flag)
+        cut = Cut("Uncertainty Cut", primary_flag=flag, verbose=self.logger.verbose)
+        self.add(cut)
+
+    def add_UncertaintyEstimation(
+        self, temp_x2_max_value: float = 20, uncert_cut_flag: int = 0x2
+    ):
+        pass
+
+    def add_ChiSquareCut(self, flag: int = 0x1, max_value: float = 10):
+        flag = PrimaryFlag(
+            "high_psf_chi_square",
+            f"measurement has a PSF chi-square above {max_value}",
+            flag,
+        )
+        cut = Cut("PSF Chi-Square Cut", primary_flag=flag, verbose=self.logger.verbose)
+        self.add(cut)
+
+    def add_ControlLightCurveCut(
+        self,
+        flag: int = 0x400000,
+        questionable_flag: int = 0x80000,
+        x2_max: float = 2.5,
+        x2_flag: int = 0x100,
+        snr_max: float = 3.0,
+        snr_flag: int = 0x200,
+        Nclip_max: int = 2,
+        Nclip_flag: int = 0x400,
+        Ngood_min: int = 4,
+        Ngood_flag: int = 0x800,
+    ):
+        primary_flag = PrimaryFlag(
+            "bad_epoch",
+            flag,
+            description="control flux corresponding to this epoch is inconsistent with 0",
+        )
+
+        # TODO
+        secondary_flags = [
+            Flag(
+                "high_control_x2",
+                x2_flag,
+                description=f"chi-square of control flux corresponding to this epoch is higher than {x2_max}",
+            ),
+            Flag(
+                "high_control_snr",
+                snr_flag,
+                description=f"SNR of control flux corresponding to this epoch is higher than {snr_max}",
+            ),
+            Flag(
+                "high_control_Nclip",
+                Nclip_flag,
+                description=f"number of clipped control measurements corresponding to this epoch is higher than {Nclip_max}",
+            ),
+            Flag(
+                "low_control_Ngood",
+                Ngood_flag,
+                description=f"number of good control measurements corresponding to this epoch is lower than {Ngood_min}",
+            ),
+            Flag(
+                "questionable_epoch",
+                questionable_flag,
+                description=f"control measurements in this epoch were not flagged, but has one or more were clipped",
+            ),
+        ]
+
+        cut = Cut(
+            "Control Light Curve Cut",
+            description="For a given SN epoch, we can calculate the 3σ-clipped average of the corresponding N control flux measurements falling within the same epoch. Given the expectation of control flux consistency with zero, the statistical properties accompanying the 3σ-clipped average enable us to identify problematic epochs.",
+            primary_flag=primary_flag,
+            secondary_flags=secondary_flags,
+            verbose=self.logger.verbose,
+        )
         self.add(cut)
