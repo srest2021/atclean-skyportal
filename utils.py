@@ -518,8 +518,8 @@ class CutHistory:
         x2_max: float = 4.0,
         Nclip_max: int = 1,
         Ngood_min: int = 2,
-        ixclip_flag: int = 0x1000,
-        smallnum_flag: int = 0x2000,
+        large_num_clipped_flag: int = 0x1000,
+        small_num_unmasked_flag: int = 0x2000,
     ):
         primary_flag = PrimaryFlag(
             "bad_day",
@@ -530,12 +530,12 @@ class CutHistory:
         secondary_flags = [
             Flag(
                 "large_num_clipped_flag",
-                ixclip_flag,
+                large_num_clipped_flag,
                 description=f"binned epoch had a nonzero number of measurements clipped during 3sigma-clipped average",
             ),
             Flag(
                 "small_num_unmasked_flag",
-                smallnum_flag,
+                small_num_unmasked_flag,
                 description=f"binned epoch had 2 or less unmasked measurements passed to 3sigma-clipped average",
             ),
         ]

@@ -369,8 +369,8 @@ class LightCurveCleaner:
         x2_max: float = 4.0,
         Nclip_max: int = 1,
         Ngood_min: int = 2,
-        ixclip_flag: int = 0x1000,
-        smallnum_flag: int = 0x2000,
+        large_num_clipped_flag: int = 0x1000,
+        small_num_unmasked_flag: int = 0x2000,
         flux2mag_sigmalimit: float = 3.0,
     ) -> tuple[Transient, BinnedTransient]:
         """
@@ -395,9 +395,9 @@ class LightCurveCleaner:
             Maximum allowed number of clipped points per bin (default: 1).
         Ngood_min : int, optional
             Minimum number of good points per bin (default: 2).
-        ixclip_flag : int, optional
+        large_num_clipped_flag : int, optional
             Bitmask flag for bins with too many clipped points (default: 0x1000).
-        smallnum_flag : int, optional
+        small_num_unmasked_flag : int, optional
             Bitmask flag for bins with too few points (default: 0x2000).
 
         Returns
@@ -405,7 +405,6 @@ class LightCurveCleaner:
         tuple
             The transient and the binned transient after applying the cut.
         """
-        # TODO
         binned_transient = BinnedTransient(
             filt=transient.filt, verbose=transient.logger.verbose
         )
@@ -417,11 +416,10 @@ class LightCurveCleaner:
             x2_max=x2_max,
             Nclip_max=Nclip_max,
             Ngood_min=Ngood_min,
-            ixclip_flag=ixclip_flag,
-            smallnum_flag=smallnum_flag,
+            large_num_clipped_flag=large_num_clipped_flag,
+            small_num_unmasked_flag=small_num_unmasked_flag,
             flux2mag_sigmalimit=flux2mag_sigmalimit,
         )
-
         return transient, binned_transient
 
     def clean_default(self, transient: Transient) -> tuple[Transient, BinnedTransient]:
@@ -448,6 +446,6 @@ class LightCurveCleaner:
 
         transient = self.apply_ControlLightCurveCut(transient, previous_flags)
 
-        transient, binned_transient = self.apply_BadDayCut(transient)
+        transient, binned_transient = self.apply_BadDayCut(transient, previous_flags)
 
         return transient, binned_transient

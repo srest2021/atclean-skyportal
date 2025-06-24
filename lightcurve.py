@@ -1107,8 +1107,8 @@ class BinnedLightCurve(BaseLightCurve):
         x2_max: float = 4.0,
         Nclip_max: int = 1,
         Ngood_min: int = 2,
-        ixclip_flag: int = 0x1000,
-        smallnum_flag: int = 0x2000,
+        large_num_clipped_flag: int = 0x1000,
+        small_num_unmasked_flag: int = 0x2000,
     ):
         bin_center = bin_start + 0.5 * mjd_bin_size
 
@@ -1186,13 +1186,17 @@ class BinnedLightCurve(BaseLightCurve):
 
         if len(flux_statparams.ix_clip) > 0:
             lc.update_mask_column(
-                ixclip_flag, indices=flux_statparams.ix_clip, remove_old=False
+                large_num_clipped_flag,
+                indices=flux_statparams.ix_clip,
+                remove_old=False,
             )
 
         if len(good_bin_ix) < 3:  # TODO: un-hardcode this!
-            lc.update_mask_column(smallnum_flag, indices=bin_ix, remove_old=False)
+            lc.update_mask_column(
+                small_num_unmasked_flag, indices=bin_ix, remove_old=False
+            )
             self.update_mask_column(
-                smallnum_flag, indices=[cur_index], remove_old=False
+                small_num_unmasked_flag, indices=[cur_index], remove_old=False
             )
         else:
             is_bad = (
@@ -1216,10 +1220,14 @@ class BinnedLightCurve(BaseLightCurve):
         x2_max: float = 4.0,
         Nclip_max: int = 1,
         Ngood_min: int = 2,
-        ixclip_flag: int = 0x1000,
-        smallnum_flag: int = 0x2000,
+        large_num_clipped_flag: int = 0x1000,
+        small_num_unmasked_flag: int = 0x2000,
         flux2mag_sigmalimit=3.0,
     ):
+        """
+        Bins the original single-measurement LightCurve object and sets to self.t.
+        Single-measurement LightCurve object (lc) should be mutated in place.
+        """
         self.mjd_bin_size = mjd_bin_size
         self.t = pd.DataFrame(columns=list(self.colnames.all))
         if lc.t is None or lc.t.empty:
@@ -1247,8 +1255,8 @@ class BinnedLightCurve(BaseLightCurve):
                 x2_max=x2_max,
                 Nclip_max=Nclip_max,
                 Ngood_min=Ngood_min,
-                ixclip_flag=ixclip_flag,
-                smallnum_flag=smallnum_flag,
+                large_num_clipped_flag=large_num_clipped_flag,
+                small_num_unmasked_flag=small_num_unmasked_flag,
             )
 
         self.flux2mag(
@@ -1261,8 +1269,6 @@ class BinnedLightCurve(BaseLightCurve):
         )
         if "__tmp_SN" in self.t.columns:
             self.t.drop(columns=["__tmp_SN"], inplace=True)
-
-        return lc
 
 
 class BaseTransient:
@@ -1310,6 +1316,9 @@ class BaseTransient:
             self.logger.warning(
                 f"Control index {lc.control_index} already exists; overwriting..."
             )
+        self.update(lc, deep=deep)
+
+    def update(self, lc: BaseLightCurve, deep: bool = False):
         self.lcs[lc.control_index] = deepcopy(lc) if deep else lc
 
     def iterator(self):
@@ -1634,6 +1643,9 @@ class BinnedTransient(BaseTransient):
     def get(self, control_index: int) -> BinnedLightCurve:
         return super().get(control_index)
 
+    def add(self, lc: BinnedLightCurve, deep: bool = False):
+        return super().add(lc, deep=deep)
+
     def from_Transient(
         self,
         transient: Transient,
@@ -1643,8 +1655,32 @@ class BinnedTransient(BaseTransient):
         x2_max: float = 4.0,
         Nclip_max: int = 1,
         Ngood_min: int = 2,
-        ixclip_flag: int = 0x1000,
-        smallnum_flag: int = 0x2000,
+        large_num_clipped_flag: int = 0x1000,
+        small_num_unmasked_flag: int = 0x2000,
         flux2mag_sigmalimit=3.0,
     ):
-        pass
+        for lc in transient.iterator():
+            binned_lc = BinnedLightCurve(
+                lc.control_index,
+                lc.coords,
+                filt=lc.filt,
+                verbose=self.logger.verbose,
+            )
+
+            binned_lc.from_LightCurve(
+                lc,
+                previous_flags,
+                flag=flag,
+                mjd_bin_size=mjd_bin_size,
+                x2_max=x2_max,
+                Nclip_max=Nclip_max,
+                Ngood_min=Ngood_min,
+                large_num_clipped_flag=large_num_clipped_flag,
+                small_num_unmasked_flag=small_num_unmasked_flag,
+                flux2mag_sigmalimit=flux2mag_sigmalimit,
+            )
+
+            self.add(binned_lc)
+            transient.update(lc)
+
+        return transient
