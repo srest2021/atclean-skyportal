@@ -405,11 +405,7 @@ class LightCurveCleaner:
         tuple
             The transient and the binned transient after applying the cut.
         """
-        binned_transient = BinnedTransient(
-            filt=transient.filt, verbose=transient.logger.verbose
-        )
-        binned_transient.from_Transient(
-            transient,
+        binned_transient = transient.get_BinnedTransient(
             previous_flags,
             flag=flag,
             mjd_bin_size=mjd_bin_size,

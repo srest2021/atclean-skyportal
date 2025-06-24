@@ -1029,6 +1029,167 @@ class LightCurve(BaseLightCurve):
                 self.t[self.colnames.mask], flag_arr
             )
 
+    def _compute_mjd_bins(self, mjd_arr, mjd_bin_size: float = 1.0):
+        mjd_min = np.floor(mjd_arr.min())
+        mjd_max = np.ceil(mjd_arr.max())
+        bins = np.arange(mjd_min, mjd_max + mjd_bin_size, mjd_bin_size)
+        bin_indices = np.digitize(mjd_arr, bins, right=False) - 1
+        return bins, bin_indices
+
+    def get_BinnedLightCurve(
+        self,
+        previous_flags: int,
+        flag: int = 0x800000,
+        mjd_bin_size: float = 1.0,
+        x2_max: float = 4.0,
+        Nclip_max: int = 1,
+        Ngood_min: int = 2,
+        large_num_clipped_flag: int = 0x1000,
+        small_num_unmasked_flag: int = 0x2000,
+        flux2mag_sigmalimit: float = 3.0,
+    ):
+        binned_lc = BinnedLightCurve(
+            self.control_index,
+            self.coords,
+            mjd_bin_size,
+            filt=self.filt,
+            verbose=self.logger.verbose,
+        )
+        binned_lc.t = pd.DataFrame(columns=list(self.colnames.all))
+
+        if self.t is None or self.t.empty:
+            return binned_lc
+
+        mjd_arr = self.t[self.colnames.mjd].values
+        mask_arr = self.t[self.colnames.mask].values.astype(int)
+        bins, bin_indices = self._compute_mjd_bins(mjd_arr, mjd_bin_size)
+
+        if self.control_index == 0:
+            self.logger.info(f"Now averaging SN light curve")
+        else:
+            self.logger.info(f"Now averaging control light curve {self.control_index}")
+
+        for b in range(len(bins) - 1):
+            bin_ix = np.where(bin_indices == b)[0]
+
+            bin_center = bins[b] + 0.5 * mjd_bin_size
+
+            # if no measurements present, flag and skip over day
+            if len(bin_ix) < 1:
+                cur_index = binned_lc.newrow(
+                    {
+                        binned_lc.colnames.mjdbin: bin_center,
+                        binned_lc.colnames.nclip: 0,
+                        binned_lc.colnames.ngood: 0,
+                        binned_lc.colnames.nexcluded: 0,
+                        binned_lc.colnames.mask: flag,
+                    }
+                )
+                continue
+
+            good_bin_ix = binned_lc.ix_unmasked_np(
+                mask_arr, maskval=previous_flags, indices=bin_ix
+            )
+            cur_index = binned_lc.newrow(
+                {
+                    binned_lc.colnames.mjdbin: bin_center,
+                    binned_lc.colnames.nclip: 0,
+                    binned_lc.colnames.ngood: 0,
+                    binned_lc.colnames.nexcluded: len(bin_ix) - len(good_bin_ix),
+                    binned_lc.colnames.mask: 0,
+                }
+            )
+
+            # if no good measurements, average values anyway and flag
+            if len(good_bin_ix) == 0:
+                flux_statparams = self._get_average_flux(
+                    indices=bin_ix,
+                )
+                avg_mjd = self._get_average_mjd(
+                    indices=bin_ix,
+                )
+                binned_lc.add2row(
+                    cur_index,
+                    {
+                        binned_lc.colnames.mjd: avg_mjd,
+                        binned_lc.colnames.flux: flux_statparams.mean,
+                        binned_lc.colnames.dflux: flux_statparams.mean_err,
+                        binned_lc.colnames.stdev: flux_statparams.stdev,
+                        binned_lc.colnames.x2: flux_statparams.X2norm,
+                        binned_lc.colnames.nclip: flux_statparams.Nclip,
+                        binned_lc.colnames.ngood: flux_statparams.Ngood,
+                        binned_lc.colnames.mask: flag,
+                    },
+                )
+                self.update_mask_column(flag, indices=bin_ix, remove_old=False)
+                continue
+
+            flux_statparams = self._get_average_flux(indices=good_bin_ix)
+            if np.isnan(flux_statparams.mean) or len(flux_statparams.ix_good) < 1:
+                self.update_mask_column(flag, indices=bin_ix, remove_old=False)
+                binned_lc.update_mask_column(
+                    flag, indices=[cur_index], remove_old=False
+                )
+                continue
+
+            avg_mjd = self._get_average_mjd(indices=flux_statparams.ix_good)
+
+            binned_lc.add2row(
+                cur_index,
+                {
+                    binned_lc.colnames.mjd: avg_mjd,
+                    binned_lc.colnames.flux: flux_statparams.mean,
+                    binned_lc.colnames.dflux: flux_statparams.mean_err,
+                    binned_lc.colnames.stdev: flux_statparams.stdev,
+                    binned_lc.colnames.x2: flux_statparams.X2norm,
+                    binned_lc.colnames.nclip: flux_statparams.Nclip,
+                    binned_lc.colnames.ngood: flux_statparams.Ngood,
+                    binned_lc.colnames.mask: 0,
+                },
+            )
+
+            if len(flux_statparams.ix_clip) > 0:
+                self.update_mask_column(
+                    large_num_clipped_flag,
+                    indices=flux_statparams.ix_clip,
+                    remove_old=False,
+                )
+
+            if len(good_bin_ix) < 3:  # TODO: un-hardcode this!
+                self.update_mask_column(
+                    small_num_unmasked_flag, indices=bin_ix, remove_old=False
+                )
+                binned_lc.update_mask_column(
+                    small_num_unmasked_flag, indices=[cur_index], remove_old=False
+                )
+            else:
+                is_bad = (
+                    flux_statparams.Ngood < Ngood_min
+                    or flux_statparams.Nclip > Nclip_max
+                    or (
+                        flux_statparams.X2norm is not None
+                        and flux_statparams.X2norm > x2_max
+                    )
+                )
+                if is_bad:
+                    self.update_mask_column(flag, indices=bin_ix, remove_old=False)
+                    binned_lc.update_mask_column(
+                        flag, indices=[cur_index], remove_old=False
+                    )
+
+        binned_lc.flux2mag(
+            binned_lc.colnames.flux,
+            binned_lc.colnames.dflux,
+            binned_lc.colnames.mag,
+            binned_lc.colnames.dmag,
+            zpt=23.9,
+            upperlim_Nsigma=flux2mag_sigmalimit,
+        )
+        if "__tmp_SN" in binned_lc.t.columns:
+            binned_lc.t.drop(columns=["__tmp_SN"], inplace=True)
+
+        return binned_lc
+
     def postprocess(self):
         """
         Prepare the cleaned light curve for SkyPortal ingestion.
@@ -1076,199 +1237,18 @@ class BinnedLightCurve(BaseLightCurve):
         self,
         control_index: int,
         coords: Coordinates,
+        mjd_bin_size: float,
         filt: Optional[str] = None,
         verbose: bool = False,
     ):
         super().__init__(
             control_index, coords, BinnedColumnNames(), filt=filt, verbose=verbose
         )
-        self.mjd_bin_size = None
+        self.mjd_bin_size = mjd_bin_size
 
     @property
     def default_mjd_colname(self):
         return self.colnames.mjdbin
-
-    def _compute_mjd_bins(self, mjd_arr, mjd_bin_size: float = 1.0):
-        mjd_min = np.floor(mjd_arr.min())
-        mjd_max = np.ceil(mjd_arr.max())
-        bins = np.arange(mjd_min, mjd_max + mjd_bin_size, mjd_bin_size)
-        bin_indices = np.digitize(mjd_arr, bins, right=False) - 1
-        return bins, bin_indices
-
-    def _process_bin(
-        self,
-        lc: LightCurve,
-        previous_flags: int,
-        mask_arr: np.ndarray,
-        bin_ix: np.ndarray,
-        bin_start: float,
-        flag: int = 0x800000,
-        mjd_bin_size: float = 1.0,
-        x2_max: float = 4.0,
-        Nclip_max: int = 1,
-        Ngood_min: int = 2,
-        large_num_clipped_flag: int = 0x1000,
-        small_num_unmasked_flag: int = 0x2000,
-    ):
-        bin_center = bin_start + 0.5 * mjd_bin_size
-
-        # if no measurements present, flag and skip over day
-        if len(bin_ix) < 1:
-            cur_index = self.newrow(
-                {
-                    self.colnames.mjdbin: bin_center,
-                    self.colnames.nclip: 0,
-                    self.colnames.ngood: 0,
-                    self.colnames.nexcluded: 0,
-                    self.colnames.mask: flag,
-                }
-            )
-            return
-
-        good_bin_ix = self.ix_unmasked_np(
-            mask_arr, maskval=previous_flags, indices=bin_ix
-        )
-        cur_index = self.newrow(
-            {
-                self.colnames.mjdbin: bin_center,
-                self.colnames.nclip: 0,
-                self.colnames.ngood: 0,
-                self.colnames.nexcluded: len(bin_ix) - len(good_bin_ix),
-                self.colnames.mask: 0,
-            }
-        )
-
-        # if no good measurements, average values anyway and flag
-        if len(good_bin_ix) == 0:
-            flux_statparams = lc._get_average_flux(
-                indices=bin_ix,
-            )
-            avg_mjd = lc._get_average_mjd(
-                indices=bin_ix,
-            )
-            self.add2row(
-                cur_index,
-                {
-                    self.colnames.mjd: avg_mjd,
-                    self.colnames.flux: flux_statparams.mean,
-                    self.colnames.dflux: flux_statparams.mean_err,
-                    self.colnames.stdev: flux_statparams.stdev,
-                    self.colnames.x2: flux_statparams.X2norm,
-                    self.colnames.nclip: flux_statparams.Nclip,
-                    self.colnames.ngood: flux_statparams.Ngood,
-                    self.colnames.mask: flag,
-                },
-            )
-            lc.update_mask_column(flag, indices=bin_ix, remove_old=False)
-            return
-
-        flux_statparams = lc._get_average_flux(indices=good_bin_ix)
-        if np.isnan(flux_statparams.mean) or len(flux_statparams.ix_good) < 1:
-            lc.update_mask_column(flag, indices=bin_ix, remove_old=False)
-            self.update_mask_column(flag, indices=[cur_index], remove_old=False)
-            return
-
-        avg_mjd = lc._get_average_mjd(indices=flux_statparams.ix_good)
-
-        self.add2row(
-            cur_index,
-            {
-                self.colnames.mjd: avg_mjd,
-                self.colnames.flux: flux_statparams.mean,
-                self.colnames.dflux: flux_statparams.mean_err,
-                self.colnames.stdev: flux_statparams.stdev,
-                self.colnames.x2: flux_statparams.X2norm,
-                self.colnames.nclip: flux_statparams.Nclip,
-                self.colnames.ngood: flux_statparams.Ngood,
-                self.colnames.mask: 0,
-            },
-        )
-
-        if len(flux_statparams.ix_clip) > 0:
-            lc.update_mask_column(
-                large_num_clipped_flag,
-                indices=flux_statparams.ix_clip,
-                remove_old=False,
-            )
-
-        if len(good_bin_ix) < 3:  # TODO: un-hardcode this!
-            lc.update_mask_column(
-                small_num_unmasked_flag, indices=bin_ix, remove_old=False
-            )
-            self.update_mask_column(
-                small_num_unmasked_flag, indices=[cur_index], remove_old=False
-            )
-        else:
-            is_bad = (
-                flux_statparams.Ngood < Ngood_min
-                or flux_statparams.Nclip > Nclip_max
-                or (
-                    flux_statparams.X2norm is not None
-                    and flux_statparams.X2norm > x2_max
-                )
-            )
-            if is_bad:
-                lc.update_mask_column(flag, indices=bin_ix, remove_old=False)
-                self.update_mask_column(flag, indices=[cur_index], remove_old=False)
-
-    def from_LightCurve(
-        self,
-        lc: LightCurve,
-        previous_flags: int,
-        flag: int = 0x800000,
-        mjd_bin_size: float = 1.0,
-        x2_max: float = 4.0,
-        Nclip_max: int = 1,
-        Ngood_min: int = 2,
-        large_num_clipped_flag: int = 0x1000,
-        small_num_unmasked_flag: int = 0x2000,
-        flux2mag_sigmalimit=3.0,
-    ):
-        """
-        Bins the original single-measurement LightCurve object and sets to self.t.
-        Single-measurement LightCurve object (lc) should be mutated in place.
-        """
-        self.mjd_bin_size = mjd_bin_size
-        self.t = pd.DataFrame(columns=list(self.colnames.all))
-        if lc.t is None or lc.t.empty:
-            return
-
-        mjd_arr = lc.t[lc.colnames.mjd].values
-        mask_arr = lc.t[lc.colnames.mask].values.astype(int)
-        bins, bin_indices = self._compute_mjd_bins(mjd_arr, mjd_bin_size)
-
-        if self.control_index == 0:
-            self.logger.info(f"Now averaging SN light curve")
-        else:
-            self.logger.info(f"Now averaging control light curve {self.control_index}")
-
-        for b in range(len(bins) - 1):
-            bin_ix = np.where(bin_indices == b)[0]
-            self._process_bin(
-                lc,
-                previous_flags,
-                mask_arr,
-                bin_ix,
-                bins[b],
-                flag=flag,
-                mjd_bin_size=mjd_bin_size,
-                x2_max=x2_max,
-                Nclip_max=Nclip_max,
-                Ngood_min=Ngood_min,
-                large_num_clipped_flag=large_num_clipped_flag,
-                small_num_unmasked_flag=small_num_unmasked_flag,
-            )
-
-        self.flux2mag(
-            self.colnames.flux,
-            self.colnames.dflux,
-            self.colnames.mag,
-            self.colnames.dmag,
-            zpt=23.9,
-            upperlim_Nsigma=flux2mag_sigmalimit,
-        )
-        if "__tmp_SN" in self.t.columns:
-            self.t.drop(columns=["__tmp_SN"], inplace=True)
 
 
 class BaseTransient:
@@ -1625,30 +1605,8 @@ class Transient(BaseTransient):
         for i in self.control_lc_indices:
             self.get(i).copy_flags(flags_to_copy)
 
-    def postprocess(self):
-        if self.filt is not None:
-            raise RuntimeError(
-                f"Filter '{self.filt}' should be None for postprocessing"
-            )
-
-        for i in self.lc_indices:
-            self.get(i).postprocess()
-
-
-class BinnedTransient(BaseTransient):
-    def __init__(self, filt: Optional[str] = None, verbose: bool = False):
-        super().__init__(filt=filt, verbose=verbose)
-        self.lcs: Dict[int, BinnedLightCurve] = {}
-
-    def get(self, control_index: int) -> BinnedLightCurve:
-        return super().get(control_index)
-
-    def add(self, lc: BinnedLightCurve, deep: bool = False):
-        return super().add(lc, deep=deep)
-
-    def from_Transient(
+    def get_BinnedTransient(
         self,
-        transient: Transient,
         previous_flags: int,
         flag: int = 0x800000,
         mjd_bin_size: float = 1.0,
@@ -1659,16 +1617,12 @@ class BinnedTransient(BaseTransient):
         small_num_unmasked_flag: int = 0x2000,
         flux2mag_sigmalimit=3.0,
     ):
-        for lc in transient.iterator():
-            binned_lc = BinnedLightCurve(
-                lc.control_index,
-                lc.coords,
-                filt=lc.filt,
-                verbose=self.logger.verbose,
-            )
+        binned_transient = BinnedTransient(
+            mjd_bin_size, filt=self.filt, verbose=self.logger.verbose
+        )
 
-            binned_lc.from_LightCurve(
-                lc,
+        for lc in self.iterator():
+            binned_lc = lc.get_BinnedLightCurve(
                 previous_flags,
                 flag=flag,
                 mjd_bin_size=mjd_bin_size,
@@ -1680,7 +1634,30 @@ class BinnedTransient(BaseTransient):
                 flux2mag_sigmalimit=flux2mag_sigmalimit,
             )
 
-            self.add(binned_lc)
-            transient.update(lc)
+            binned_transient.add(binned_lc)
 
-        return transient
+        return binned_transient
+
+    def postprocess(self):
+        if self.filt is not None:
+            raise RuntimeError(
+                f"Filter '{self.filt}' should be None for postprocessing"
+            )
+
+        for i in self.lc_indices:
+            self.get(i).postprocess()
+
+
+class BinnedTransient(BaseTransient):
+    def __init__(
+        self, mjd_bin_size: float, filt: Optional[str] = None, verbose: bool = False
+    ):
+        super().__init__(filt=filt, verbose=verbose)
+        self.lcs: Dict[int, BinnedLightCurve] = {}
+        self.mjd_bin_size = mjd_bin_size
+
+    def get(self, control_index: int) -> BinnedLightCurve:
+        return super().get(control_index)
+
+    def add(self, lc: BinnedLightCurve, deep: bool = False):
+        return super().add(lc, deep=deep)
