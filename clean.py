@@ -10,7 +10,7 @@ import pandas as pd
 from constants import CHISQUARECUTS_TABLE_COLNAMES
 from lightcurve import BaseTransient, BinnedTransient, LightCurve, Transient
 from pdastro import AandB, AnotB
-from utils import CustomLogger, combine_flags, new_row
+from utils import CustomLogger, CutHistory, combine_flags, new_row
 
 
 class ChiSquareCutsTable:
@@ -128,6 +128,7 @@ class LightCurveCleaner:
 
     def __init__(self, verbose: bool = False):
         self.logger = CustomLogger(verbose=verbose)
+        self.cut_history = CutHistory(verbose=verbose)
 
     def apply_cut(
         self,
@@ -185,12 +186,13 @@ class LightCurveCleaner:
             Maximum allowed uncertainty value (default: 160).
         """
         self.apply_cut(transient, transient.colnames.dflux, flag, max_value=max_value)
+        self.cut_history.add_UncertaintyCut(flag=flag, max_value=max_value)
 
     def apply_UncertaintyEstimation(
         self,
         transient: Transient,
         temp_x2_max_value: float = 20,
-        uncert_cut_flag: int = 0x2,
+        uncertainty_cut_flag: int = 0x2,
     ) -> Transient:
         """
         Estimate and, if needed, increase uncertainties by adding systematic noise in quadrature.
@@ -212,7 +214,8 @@ class LightCurveCleaner:
             The transient with an updated uncertainty column and a new "dflux_offset_in_quadrature" column.
         """
         stats_table = transient.get_uncert_est_stats(
-            temp_x2_max_value=temp_x2_max_value, uncert_cut_flag=uncert_cut_flag
+            temp_x2_max_value=temp_x2_max_value,
+            uncertainty_cut_flag=uncertainty_cut_flag,
         )
         final_sigma_extra = np.median(stats_table["sigma_extra"])
         sigma_typical_old = np.median(stats_table["median_dflux"])
@@ -235,6 +238,8 @@ class LightCurveCleaner:
             self.logger.info(
                 'The extra noise was added to the uncertainties of the SN light curve and copied to the "duJy_new" column'
             )
+
+        self.cut_history.add_UncertaintyEstimation(temp_x2_max_value=temp_x2_max_value)
 
         return transient
 
@@ -289,6 +294,8 @@ class LightCurveCleaner:
 
         # apply it
         transient.apply_cut(transient.colnames.chisquare, flag, max_value=max_value)
+
+        self.cut_history.add_ChiSquareCut(flag=flag, max_value=max_value)
 
         return transient, stats_table
 
@@ -358,6 +365,20 @@ class LightCurveCleaner:
             Ngood_min=Ngood_min,
             Ngood_flag=Ngood_flag,
         )
+
+        self.cut_history.add_ControlLightCurveCut(
+            flag=flag,
+            questionable_flag=questionable_flag,
+            x2_max=x2_max,
+            x2_flag=x2_flag,
+            snr_max=snr_max,
+            snr_flag=snr_flag,
+            Nclip_max=Nclip_max,
+            Nclip_flag=Nclip_flag,
+            Ngood_min=Ngood_min,
+            Ngood_flag=Ngood_flag,
+        )
+
         return transient
 
     def apply_BadDayCut(
@@ -416,9 +437,28 @@ class LightCurveCleaner:
             small_num_unmasked_flag=small_num_unmasked_flag,
             flux2mag_sigmalimit=flux2mag_sigmalimit,
         )
+
+        self.cut_history.add_BadDayCut(
+            flag=flag,
+            mjd_bin_size=mjd_bin_size,
+            x2_max=x2_max,
+            Nclip_max=Nclip_max,
+            Ngood_min=Ngood_min,
+            large_num_clipped_flag=large_num_clipped_flag,
+            small_num_unmasked_flag=small_num_unmasked_flag,
+        )
+
         return transient, binned_transient
 
-    def clean_default(self, transient: Transient) -> tuple[Transient, BinnedTransient]:
+    def clean_default(
+        self,
+        transient: Transient,
+        uncertainty_cut: float = 160.0,
+        uncertainty_cut_flag: int = 0x1,
+        chi_square_cut: float = 10.0,
+        chi_square_cut_flag: int = 0x2,
+        controls_cut_flag=0x400000,
+    ) -> tuple[Transient, BinnedTransient]:
         """
         Run the default cleaning pipeline on a transient.
 
@@ -432,16 +472,26 @@ class LightCurveCleaner:
         tuple
             The cleaned transient and the corresponding binned transient.
         """
-        transient = self.apply_UncertaintyCut(transient)
+        transient = self.apply_UncertaintyCut(
+            transient, flag=uncertainty_cut_flag, max_value=uncertainty_cut
+        )
 
-        transient = self.apply_UncertaintyEstimation(transient)
+        transient = self.apply_UncertaintyEstimation(
+            transient, uncertainty_cut_flag=uncertainty_cut_flag
+        )
 
         # stats_table contains the contamination and loss statistics
         # for the range of possible chi-square cuts:
-        transient, stats_table = self.apply_ChiSquareCut(transient)
+        transient, stats_table = self.apply_ChiSquareCut(
+            transient, flag=chi_square_cut_flag, max_value=chi_square_cut
+        )
 
-        transient = self.apply_ControlLightCurveCut(transient, previous_flags)
+        previous_flags = uncertainty_cut_flag | chi_square_cut_flag
+        transient = self.apply_ControlLightCurveCut(
+            transient, previous_flags, flag=controls_cut_flag
+        )
 
+        previous_flags = previous_flags | controls_cut_flag
         transient, binned_transient = self.apply_BadDayCut(transient, previous_flags)
 
-        return transient, binned_transient
+        return transient, binned_transient, self.cut_history

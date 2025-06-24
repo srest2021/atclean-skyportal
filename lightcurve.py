@@ -1450,7 +1450,7 @@ class Transient(BaseTransient):
         self.logger.success()
 
     def get_uncert_est_stats(
-        self, temp_x2_max_value: float = 20, uncert_cut_flag: int = 0x2
+        self, temp_x2_max_value: float = 20, uncertainty_cut_flag: int = 0x2
     ) -> pd.DataFrame:
         """
         Get a table containing the median uncertainty, standard deviation of the flux,
@@ -1469,7 +1469,7 @@ class Transient(BaseTransient):
 
         for i in self.control_lc_indices:
             dflux_clean_ix = self.get(i).ix_unmasked(
-                self.colnames.mask, maskval=uncert_cut_flag
+                self.colnames.mask, maskval=uncertainty_cut_flag
             )
             x2_clean_ix = self.get(i).ix_inrange(
                 colnames=[self.colnames.chisquare],

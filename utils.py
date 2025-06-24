@@ -435,9 +435,7 @@ class CutHistory:
         cut = Cut("Uncertainty Cut", primary_flag=flag, verbose=self.logger.verbose)
         self.add(cut)
 
-    def add_UncertaintyEstimation(
-        self, temp_x2_max_value: float = 20, uncert_cut_flag: int = 0x2
-    ):
+    def add_UncertaintyEstimation(self, temp_x2_max_value: float = 20):
         cut = Cut(
             "True Uncertainties Estimation",
             description=f"We also attempt to account for an extra noise source in the data by estimating the true typical uncertainty, deriving the additional systematic uncertainty, and applying this extra noise to the uncertainty column. We also use a temporary, very high PSF chi-square cut value of {temp_x2_max_value} to eliminate the most egregious outliers from the data before estimating the true uncertainties.",
