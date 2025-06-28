@@ -167,17 +167,17 @@ class ColumnNames:
         self, key: str, name: str, is_required: bool = False, overwrite: bool = False
     ):
         if not isinstance(key, str) or not key.strip():
-            raise ValueError("Column key must be a non-empty string.")
+            raise ValueError("Column key must be a non-empty string")
         if not isinstance(name, str) or not name.strip():
-            raise ValueError(f"Column name for key '{key}' must be a non-empty string.")
+            raise ValueError(f"Column name for key '{key}' must be a non-empty string")
 
         # if key exists but the name is different, raise an error
         existing_name = self._required_colnames.get(key) or self._optional_colnames.get(
             key
         )
         if existing_name and existing_name != name and not overwrite:
-            raise RuntimeError(
-                f"Column key '{key}' is already defined with a different name '{existing_name}'."
+            self.logger.warning(
+                f"Column key '{key}' is already defined with a different name '{existing_name}'"
             )
 
         if is_required:
@@ -199,7 +199,7 @@ class ColumnNames:
         else:
             if key not in self._optional_colnames:
                 raise RuntimeError(
-                    f"Cannot update non-existing optional column name {key} with '{name}'"
+                    f"Cannot update non-existing optional column name '{key}' with '{name}'"
                 )
             self._optional_colnames[key] = name
 
@@ -216,17 +216,23 @@ class ColumnNames:
     def has(self, name: str):
         return name in self._required_colnames or name in self._optional_colnames
 
-    def __getattr__(self, name: str) -> str | None:
-        """
-        Dynamic access to column names, e.g., obj.mjd or obj.chisquare.
-        """
-        if name in self._required_colnames:
-            return self._required_colnames[name]
-        if name in self._optional_colnames:
-            return self._optional_colnames[name]
-        raise AttributeError(
-            f"'{self.__class__.__name__}' object has no attribute '{name}'"
-        )
+    def __getattr__(self, name: str) -> Optional[str]:
+        try:
+            # Safely access dicts without triggering __getattr__
+            required_colnames = object.__getattribute__(self, "_required_colnames")
+            optional_colnames = object.__getattribute__(self, "_optional_colnames")
+        except AttributeError:
+            # If the object is half-initialized (e.g., during deepcopy), just fail gracefully
+            raise AttributeError(
+                f"Cannot access required or optional column name dicts"
+            )
+
+        if name in required_colnames:
+            return required_colnames[name]
+        if name in optional_colnames:
+            return optional_colnames[name]
+
+        raise AttributeError(f"{name} not found in column names")
 
     def __str__(self) -> str:
         """Readable string representation of all column names."""
@@ -344,9 +350,9 @@ class Cut:
         self.name = name
         self.description: Optional[str] = description
         self._primary_flag: Optional[PrimaryFlag] = primary_flag
-        self._secondary_flags: Dict[str, Flag] = {
-            flag.name: flag for flag in secondary_flags
-        }
+        self._secondary_flags: Dict[str, Flag] = (
+            {flag.name: flag for flag in secondary_flags} if secondary_flags else {}
+        )
 
         self.logger = CustomLogger(verbose=verbose)
 
@@ -429,8 +435,8 @@ class CutHistory:
     def add_UncertaintyCut(self, flag: int = 0x2, max_value: float = 160):
         flag = PrimaryFlag(
             "high_uncertainty",
-            f"measurement has an uncertainty above {max_value}",
             flag,
+            f"measurement has an uncertainty above {max_value}",
         )
         cut = Cut("Uncertainty Cut", primary_flag=flag, verbose=self.logger.verbose)
         self.add(cut)
@@ -438,7 +444,7 @@ class CutHistory:
     def add_UncertaintyEstimation(self, temp_x2_max_value: float = 20):
         cut = Cut(
             "True Uncertainties Estimation",
-            description=f"We also attempt to account for an extra noise source in the data by estimating the true typical uncertainty, deriving the additional systematic uncertainty, and applying this extra noise to the uncertainty column. We also use a temporary, very high PSF chi-square cut value of {temp_x2_max_value} to eliminate the most egregious outliers from the data before estimating the true uncertainties.",
+            description=f"We attempt to account for an extra noise source in the data by estimating the true typical uncertainty, deriving the additional systematic uncertainty, and applying this extra noise to the uncertainty column. We also use a temporary, very high PSF chi-square cut value of {temp_x2_max_value} to eliminate the most egregious outliers from the data before estimating the true uncertainties.",
             verbose=self.logger.verbose,
         )
         self.add(cut)
@@ -446,8 +452,8 @@ class CutHistory:
     def add_ChiSquareCut(self, flag: int = 0x1, max_value: float = 10):
         flag = PrimaryFlag(
             "high_psf_chi_square",
-            f"measurement has a PSF chi-square above {max_value}",
             flag,
+            f"measurement has a PSF chi-square above {max_value}",
         )
         cut = Cut("PSF Chi-Square Cut", primary_flag=flag, verbose=self.logger.verbose)
         self.add(cut)
@@ -550,4 +556,6 @@ class CutHistory:
     def __str__(self):
         if not self._cuts:
             return "CutHistory: no cuts applied."
-        return "CutHistory:\n" + "\n\n".join(str(cut) for cut in self._cuts.values())
+        return "-- Cut History --\n" + "\n".join(
+            cut.__str__() for cut in self._cuts.values()
+        )

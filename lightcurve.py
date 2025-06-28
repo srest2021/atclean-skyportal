@@ -213,6 +213,10 @@ class BaseLightCurve(pdastrostatsclass):
 
         return np.bitwise_or.reduce(self.t[self.colnames.mask])
 
+    def get_percent_flagged(self,  flag: Optional[int] = None) -> float:
+        bad_ix = self.get_bad_indices(flag=flag)
+        return len(bad_ix)/len(self.t)
+
     def get_good_indices(self, flag: Optional[int] = None) -> List[int]:
         """
         Return the list of indices corresponding to "good" (unmasked) rows.
@@ -957,7 +961,7 @@ class LightCurve(BaseLightCurve):
         )
 
         # store the sigma_extra we added in a new column
-        self.colnames.update("dflux_offset", "dflux_offset_in_quadrature")
+        self.colnames.add("dflux_offset", "dflux_offset_in_quadrature")
         self.t[self.colnames.dflux_offset] = np.full(len(self.t), sigma_extra)
 
         # recalculate SNR
@@ -1298,15 +1302,15 @@ class BaseTransient:
 
     @property
     def num_controls(self):
-        return len(self.lcs)
+        return sum(1 for k in self.lcs if k != 0)
 
     @property
     def lc_indices(self) -> List[int]:
-        return list(self.lcs.keys())
+        return list(self.lcs)
 
     @property
     def control_lc_indices(self) -> List[int]:
-        return [i for i in self.lc_indices if i != 0]
+        return [i for i in self.lcs if i != 0]
 
     def add(self, lc: BaseLightCurve, deep: bool = True):
         if lc.control_index in self.lcs:

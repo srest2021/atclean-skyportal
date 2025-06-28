@@ -172,7 +172,7 @@ class LightCurveCleaner:
         transient: Transient,
         flag: int = 0x2,
         max_value: float = 160,
-    ):
+    ) -> Transient:
         """
         Mask data points with uncertainty above a threshold.
 
@@ -187,6 +187,7 @@ class LightCurveCleaner:
         """
         self.apply_cut(transient, transient.colnames.dflux, flag, max_value=max_value)
         self.cut_history.add_UncertaintyCut(flag=flag, max_value=max_value)
+        return transient
 
     def apply_UncertaintyEstimation(
         self,
