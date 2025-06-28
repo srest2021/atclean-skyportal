@@ -4,11 +4,11 @@
 import argparse
 import sys
 import time
-from typing import Dict
+from typing import Dict, List
 
 from clean import LightCurveCleaner
 from download import AtlasLightCurveDownloader, ControlCoordinatesTable
-from lightcurve import LightCurve
+from lightcurve import LightCurve, BaseTransient
 from utils import (
     RA,
     BadDayCut,
@@ -114,8 +114,21 @@ if __name__ == "__main__":
     sys.exit()
 
     cleaner = LightCurveCleaner(verbose=args.verbose)
-    cleaner.clean_default(transient_o)
-    cleaner.clean_default(transient_c)
+    transient_o, binned_transient_o, cut_history_o = cleaner.clean_default(transient_o)
+    transient_c, binned_transient_c, cut_history_c = cleaner.clean_default(transient_c)
+
+    final_transient = transient_o.merge(transient_c)
+    final_transient.postprocess()
+
+    final_binned_transient = binned_transient_o.merge(binned_transient_c)
+    final_binned_transient.postprocess()
+
+    if args.verbose:
+        print(cut_history_o)
+        print(cut_history_c)
+
+    result = [final_transient, final_binned_transient]
 
     end_time = time.time()
-    print(f"Elapsed time: {end_time - start_time:.2f} seconds")
+    if args.verbose:
+        print(f"Elapsed time: {end_time - start_time:.2f} seconds")

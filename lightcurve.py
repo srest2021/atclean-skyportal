@@ -116,6 +116,50 @@ class BaseLightCurve(pdastrostatsclass):
         # calculate SNR
         self.calculate_snr_col()
 
+    def _get_postprocess_cols_dict(self):
+        return {
+            self.colnames.mjd: "mjd",
+            self.colnames.ra: "ra",
+            self.colnames.dec: "dec",
+            self.colnames.mag: "mag",
+            self.colnames.dmag: "magerr",
+            self.colnames.flux: "flux",
+            self.colnames.dflux: "dflux",
+            self.colnames.limiting_mag: "limiting_mag",
+            self.colnames.filter: "filter",
+        }
+
+    def postprocess(self):
+        """
+        Prepare the cleaned light curve for SkyPortal ingestion.
+
+        Renames columns, drops unnecessary columns, updates filter names,
+        and adds optional columns for SkyPortal compatibility.
+        """
+        # convert column names
+        update_cols_dict = self._get_postprocess_cols_dict()
+        desired_cols = set(update_cols_dict.values())
+        self.t.rename(
+            columns=update_cols_dict,
+            inplace=True,
+        )
+        self.colnames.update_many(update_cols_dict)
+        if not desired_cols.issubset(set(self.t.columns)):
+            raise ValueError("Missing expected column")
+
+        # drop unnecessary columns
+        drop_columns = list(set(self.t.columns.values) - desired_cols)
+        self.t.drop(columns=drop_columns, inplace=True)
+
+        # replace 'o' -> 'atlaso' and 'c' -> 'atlasc'
+        self.t.loc[self.get_filt_ix("c"), self.colnames.filter] = "atlasc"
+        self.t.loc[self.get_filt_ix("o"), self.colnames.filter] = "atlaso"
+
+        # add optional columns
+        self.colnames.add_many({"magsys": "magsys", "origin": "origin"})
+        self.t[self.colnames.magsys] = "ab"
+        self.t[self.colnames.origin] = "fp"
+
     def get_filt_ix(self, filt: str):
         """
         Get indices of rows matching a specific filter.
@@ -1190,47 +1234,6 @@ class LightCurve(BaseLightCurve):
 
         return binned_lc
 
-    def postprocess(self):
-        """
-        Prepare the cleaned light curve for SkyPortal ingestion.
-
-        Renames columns, drops unnecessary columns, updates filter names,
-        and adds optional columns for SkyPortal compatibility.
-        """
-        # convert column names
-        update_cols_dict = {
-            self.colnames.mjd: "mjd",
-            self.colnames.ra: "ra",
-            self.colnames.dec: "dec",
-            self.colnames.mag: "mag",
-            self.colnames.dmag: "magerr",
-            self.colnames.flux: "flux",
-            self.colnames.dflux: "dflux",
-            self.colnames.limiting_mag: "limiting_mag",
-            self.colnames.filter: "filter",
-        }
-        desired_cols = set(update_cols_dict.values())
-        self.t.rename(
-            columns=update_cols_dict,
-            inplace=True,
-        )
-        self.colnames.update_many(update_cols_dict)
-        if not desired_cols.issubset(set(self.t.columns)):
-            raise ValueError("Missing expected column")
-
-        # drop unnecessary columns
-        drop_columns = list(set(self.t.columns.values) - desired_cols)
-        self.t.drop(columns=drop_columns, inplace=True)
-
-        # replace 'o' -> 'atlaso' and 'c' -> 'atlasc'
-        self.t.loc[self.get_filt_ix("c"), self.colnames.filter] = "atlasc"
-        self.t.loc[self.get_filt_ix("o"), self.colnames.filter] = "atlaso"
-
-        # add optional columns
-        self.colnames.add_many({"magsys": "magsys", "origin": "origin"})
-        self.t[self.colnames.magsys] = "ab"
-        self.t[self.colnames.origin] = "fp"
-
 
 class BinnedLightCurve(BaseLightCurve):
     def __init__(
@@ -1249,6 +1252,11 @@ class BinnedLightCurve(BaseLightCurve):
     @property
     def default_mjd_colname(self):
         return self.colnames.mjdbin
+
+    def _get_postprocess_cols_dict(self):
+        cols_dict = super()._get_postprocess_cols_dict()
+        cols_dict[self.colnames.mjdbin] = "mjd_bin"
+        return cols_dict
 
 
 class BaseTransient:
@@ -1270,6 +1278,15 @@ class BaseTransient:
     def preprocess(self, flux2mag_sigmalimit: float = 3.0):
         for i in self.lc_indices:
             self.get(i).preprocess(flux2mag_sigmalimit=flux2mag_sigmalimit)
+
+    def postprocess(self):
+        if self.filt is not None:
+            raise RuntimeError(
+                f"Filter '{self.filt}' should be None for postprocessing"
+            )
+
+        for i in self.lc_indices:
+            self.get(i).postprocess()
 
     @property
     def colnames(self):
@@ -1637,15 +1654,6 @@ class Transient(BaseTransient):
             binned_transient.add(binned_lc)
 
         return binned_transient
-
-    def postprocess(self):
-        if self.filt is not None:
-            raise RuntimeError(
-                f"Filter '{self.filt}' should be None for postprocessing"
-            )
-
-        for i in self.lc_indices:
-            self.get(i).postprocess()
 
 
 class BinnedTransient(BaseTransient):
