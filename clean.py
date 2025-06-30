@@ -28,7 +28,7 @@ class ChiSquareCutsTable:
         self.logger = CustomLogger(self.__class__.__name__)
         self.t = None
 
-        self.lc = deepcopy(lc)
+        self.lc = lc
         if indices is None:
             indices = self.lc.getindices()
         self.indices = indices
@@ -280,7 +280,14 @@ class LightCurveCleaner:
             The transient with the cut applied and the table containing contamination and loss statistics for the range of possible chi-squares.
         """
         # calculate contamination and loss for possible chi-square cuts in range (min_cut, max_cut)
-        stats_table = ChiSquareCutsTable(transient.get_sn(), snr_bound=snr_bound)
+        stats_table = ChiSquareCutsTable(
+            (
+                transient.get_all_controls()
+                if transient.num_controls > 0
+                else transient.get_sn()
+            ),
+            snr_bound=snr_bound,
+        )
         stats_table.calculate_table(
             start=table_start,
             stop=max(max_value, table_stop),

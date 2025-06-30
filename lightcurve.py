@@ -213,9 +213,9 @@ class BaseLightCurve(pdastrostatsclass):
 
         return np.bitwise_or.reduce(self.t[self.colnames.mask])
 
-    def get_percent_flagged(self,  flag: Optional[int] = None) -> float:
+    def get_percent_flagged(self, flag: Optional[int] = None) -> float:
         bad_ix = self.get_bad_indices(flag=flag)
-        return len(bad_ix)/len(self.t)
+        return len(bad_ix) / len(self.t)
 
     def get_good_indices(self, flag: Optional[int] = None) -> List[int]:
         """
@@ -361,7 +361,12 @@ class BaseLightCurve(pdastrostatsclass):
 
         all_ix = self.getindices(indices)
         cut_ix = self.ix_outrange(
-            colnames=[column], lowlim=min_value, uplim=max_value, indices=all_ix
+            colnames=[column],
+            lowlim=min_value,
+            uplim=max_value,
+            exclude_lowlim=True,
+            exclude_uplim=True,
+            indices=all_ix,
         )
 
         self.update_mask_column(flag, cut_ix)
@@ -420,7 +425,7 @@ class BaseLightCurve(pdastrostatsclass):
         self.t.replace([np.inf, -np.inf], np.nan, inplace=True)
 
         # calculate flux/dflux
-        self.logger.info(f"Calculating flux/dflux in for '{self.colnames.snr}' column")
+        self.logger.info(f"Calculating flux/dflux for '{self.colnames.snr}' column")
         self.t[self.colnames.snr] = (
             self.t[self.colnames.flux] / self.t[self.colnames.dflux]
         )
@@ -428,9 +433,7 @@ class BaseLightCurve(pdastrostatsclass):
     def _get_average_flux(self, indices=None) -> StatParams:
         self.calcaverage_sigmacutloop_np(
             self.t[self.colnames.flux].values,
-            self.colnames.flux,
             noise_arr=self.t[self.colnames.dflux].values,
-            noise_colname=self.colnames.dflux,
             indices=indices,
             Nsigma=3.0,
             median_firstiteration=True,
@@ -440,7 +443,6 @@ class BaseLightCurve(pdastrostatsclass):
     def _get_average_mjd(self, indices=None) -> float:
         self.calcaverage_sigmacutloop_np(
             self.t[self.default_mjd_colname].values,
-            self.default_mjd_colname,
             indices=indices,
             Nsigma=0,
             median_firstiteration=False,
@@ -652,24 +654,25 @@ class BaseLightCurve(pdastrostatsclass):
 
         return indices[keep]
 
-    def ix_not_null_np(self, colnames=None, indices=None):
-        indices = np.asarray(self.getindices(indices))
-        colnames = self.getcolnames(colnames)
+    def ix_not_null_np(self, arrays: List, indices=None):
+        if indices is None:
+            if len(arrays) == 0:
+                return np.array([], dtype=int)
+            indices = np.arange(len(arrays[0]))
+        else:
+            indices = np.asarray(indices)
 
         keep_mask = np.ones(len(indices), dtype=bool)
-        for colname in colnames:
-            col_vals = self.t[colname].values[indices]
-            keep_mask &= pd.notnull(col_vals)
+        for arr in arrays:
+            keep_mask &= pd.notnull(arr[indices])
 
         return indices[keep_mask]
 
     def calcaverage_sigmacutloop_np(
         self,
         data_arr,
-        data_colname,
         indices=None,
         noise_arr=None,
-        noise_colname=None,
         sigmacut_flag=False,
         mask_arr=None,
         maskval=None,
@@ -699,16 +702,14 @@ class BaseLightCurve(pdastrostatsclass):
 
         # remove null values if wanted
         if removeNaNs:
-            colnames = [data_colname]
+            arrays = [data_arr]
             if noise_arr is not None:
-                if noise_colname is None:
-                    raise ValueError("noise_colname cannot be None")
-                colnames.append(noise_colname)
+                arrays.append(noise_arr)
             if mask_arr is not None:
-                colnames.append(self.colnames.mask)
+                arrays.append(mask_arr)
 
             Ntot = len(indices)
-            indices = self.ix_not_null_np(colnames, indices)
+            indices = self.ix_not_null_np(arrays, indices=indices)
             self.statparams["Nnan"] = Ntot - len(indices)
             if verbose > 1:
                 print(
@@ -1343,6 +1344,15 @@ class BaseTransient:
         for i in self.lc_indices:
             self.get(i).remove_flag(flag)
 
+    def get_all_controls(self):
+        all_controls = LightCurve(None, None, verbose=self.logger.verbose)
+        all_controls.t = pd.concat(
+            [self.get(i).t for i in self.control_lc_indices],
+            ignore_index=True,
+            copy=False,
+        )
+        return all_controls
+
     def merge(self, other: Self) -> Self:
         """
         Merge this BaseTransient instance with another, combining their contained light curves.
@@ -1575,6 +1585,7 @@ class Transient(BaseTransient):
                 Nsigma=3.0,
                 median_firstiteration=True,
             )
+
             self.get_sn().statresults2table(
                 pda4MJD.statparams, c2_param2columnmapping, destindex=index
             )
