@@ -1585,7 +1585,6 @@ class Transient(BaseTransient):
                 Nsigma=3.0,
                 median_firstiteration=True,
             )
-
             self.get_sn().statresults2table(
                 pda4MJD.statparams, c2_param2columnmapping, destindex=index
             )
