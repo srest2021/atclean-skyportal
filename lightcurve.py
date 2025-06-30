@@ -14,6 +14,7 @@ from utils import (
     ColumnNames,
     Coordinates,
     CustomLogger,
+    SigmaClipper,
     StatParams,
     combine_flags,
 )
@@ -431,24 +432,27 @@ class BaseLightCurve(pdastrostatsclass):
         )
 
     def _get_average_flux(self, indices=None) -> StatParams:
-        self.calcaverage_sigmacutloop_np(
+        sigma_clipper = SigmaClipper(verbose=self.logger.verbose)
+        sigma_clipper.calcaverage_sigmacutloop(
             self.t[self.colnames.flux].values,
             noise_arr=self.t[self.colnames.dflux].values,
             indices=indices,
             Nsigma=3.0,
             median_firstiteration=True,
         )
-        return StatParams(self.statparams)
+        return sigma_clipper.statparams
 
     def _get_average_mjd(self, indices=None) -> float:
-        self.calcaverage_sigmacutloop_np(
+        sigma_clipper = SigmaClipper(verbose=self.logger.verbose)
+        sigma_clipper.calcaverage_sigmacutloop(
             self.t[self.default_mjd_colname].values,
             indices=indices,
             Nsigma=0,
             median_firstiteration=False,
         )
-        return StatParams(self.statparams).mean
+        return sigma_clipper.statparams
 
+    """
     def calcaverage_errorcut_np(
         self,
         data,
@@ -772,6 +776,7 @@ class BaseLightCurve(pdastrostatsclass):
                 print("WARNING: No convergence")
 
         return not self.statparams["converged"]
+    """
 
     def merge(self, other: Self) -> Self:
         """
@@ -988,6 +993,9 @@ class LightCurve(BaseLightCurve):
         # recalculate SNR
         self.calculate_snr_col()
 
+    def add_statparams_to_table(self, index: int, statparams: StatParams):
+        pass
+
     def flag_by_control_stats(
         self,
         flag: int = 0x400000,
@@ -1136,8 +1144,8 @@ class LightCurve(BaseLightCurve):
                 )
                 continue
 
-            good_bin_ix = binned_lc.ix_unmasked_np(
-                mask_arr, maskval=previous_flags, indices=bin_ix
+            good_bin_ix = SigmaClipper.ix_unmasked(
+                mask_arr, mask_val=previous_flags, indices=bin_ix
             )
             cur_index = binned_lc.newrow(
                 {
@@ -1564,30 +1572,42 @@ class Transient(BaseTransient):
 
             i += 1
 
-        c2_param2columnmapping = self.get_sn().intializecols4statparams(
-            prefix="c2_", format4outvals="{:.2f}", skipparams=["converged", "i"]
-        )
+        # c2_param2columnmapping = self.get_sn().intializecols4statparams(
+        #     prefix="c2_", format4outvals="{:.2f}", skipparams=["converged", "i"]
+        # )
+        sigma_clipper = SigmaClipper(verbose=self.logger.verbose)
 
         for index in range(uJy.shape[-1]):
-            pda4MJD = pdastrostatsclass()
-            pda4MJD.t[self.colnames.flux] = uJy[0:, index]
-            pda4MJD.t[self.colnames.dflux] = duJy[0:, index]
-            pda4MJD.t[self.colnames.mask] = np.bitwise_and(
-                Mask[0:, index], previous_flags
-            )
-
-            pda4MJD.calcaverage_sigmacutloop(
-                self.colnames.flux,
-                noisecol=self.colnames.dflux,
-                maskcol=self.colnames.mask,
-                maskval=previous_flags,
-                verbose=1,
+            sigma_clipper.calcaverage_sigmacutloop(
+                uJy[0:, index],
+                noise_arr=duJy[0:, index],
+                mask_arr=np.bitwise_and(Mask[0:, index], previous_flags),
+                mask_val=previous_flags,
                 Nsigma=3.0,
                 median_firstiteration=True,
             )
-            self.get_sn().statresults2table(
-                pda4MJD.statparams, c2_param2columnmapping, destindex=index
-            )
+
+            self.get_sn().add_statparams_to_table(index, sigma_clipper.statparams)
+
+            # pda4MJD = pdastrostatsclass()
+            # pda4MJD.t[self.colnames.flux] = uJy[0:, index]
+            # pda4MJD.t[self.colnames.dflux] = duJy[0:, index]
+            # pda4MJD.t[self.colnames.mask] = np.bitwise_and(
+            #     Mask[0:, index], previous_flags
+            # )
+
+            # pda4MJD.calcaverage_sigmacutloop(
+            #     self.colnames.flux,
+            #     noisecol=self.colnames.dflux,
+            #     maskcol=self.colnames.mask,
+            #     maskval=previous_flags,
+            #     verbose=1,
+            #     Nsigma=3.0,
+            #     median_firstiteration=True,
+            # )
+            # self.get_sn().statresults2table(
+            #     pda4MJD.statparams, c2_param2columnmapping, destindex=index
+            # )
 
         self.get_sn().t["c2_abs_stn"] = (
             self.get_sn().t["c2_mean"] / self.get_sn().t["c2_mean_err"]

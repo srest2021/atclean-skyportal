@@ -12,11 +12,14 @@ import re, json, requests, time, sys, io, os
 from astropy import units as u
 from astropy.coordinates import Angle, SkyCoord
 from astropy.time import Time
+from astropy.nddata import bitmask
 from collections import OrderedDict, namedtuple
 import numpy as np
 import pandas as pd
 from copy import deepcopy
 from pathlib import Path
+
+from pdastro import AnotB, not_AandB
 
 
 class CustomLogger:
@@ -295,21 +298,404 @@ class BinnedColumnNames(ColumnNames):
         )
 
 
-def nan_if_none(x):
-    return x if x is not None else np.nan
-
-
 class StatParams:
-    def __init__(self, statparams: Dict[str, int | float | None]):
-        statparams = deepcopy(statparams)
-        self.mean: float = nan_if_none(statparams["mean"])
-        self.mean_err: float = nan_if_none(statparams["mean_err"])
-        self.stdev: float = nan_if_none(statparams["stdev"])
-        self.X2norm: float = nan_if_none(statparams["X2norm"])
-        self.Nclip: int | float = nan_if_none(statparams["Nclip"])
-        self.Ngood: int | float = nan_if_none(statparams["Ngood"])
-        self.ix_good: List[int] = list(statparams["ix_good"])
-        self.ix_clip: List[int] = list(statparams["ix_clip"])
+    def __init__(self, d: Optional[Dict[str, int | float | List[int] | None]] = None):
+        if d:
+            self.from_dict(d)
+        else:
+            self.mean: Optional[float] = None
+            self.mean_err: Optional[float] = None
+            self.stdev: Optional[float] = None
+            self.stdev_err: Optional[float] = None
+            self.X2norm: Optional[float] = None
+            self.Nclip: Optional[int] = None
+            self.Ngood: Optional[int] = None
+            self.Nchanged: Optional[int] = None
+            self.Nmask: Optional[int] = None
+            self.Nnan: Optional[int] = None
+            self.ix_good: Optional[List[int]] = None
+            self.ix_clip: Optional[List[int]] = None
+
+    def from_dict(self, d: Dict[str, int | float | None]):
+        self.mean = d.get("mean")
+        self.mean_err = d.get("mean_err")
+        self.stdev = d.get("stdev")
+        self.stdev_err = d.get("stdev_err")
+        self.X2norm = d.get("X2norm")
+        self.Nclip = d.get("Nclip")
+        self.Ngood = d.get("Ngood")
+        self.Nchanged = d.get("Nchanged")
+        self.Nmask = d.get("Nmask")
+        self.Nnan = d.get("Nnan")
+        self.ix_good = d.get("ix_good")
+        self.ix_clip = d.get("ix_clip")
+
+    def update_iteration(
+        self,
+        mean: Optional[float] = None,
+        mean_err: Optional[float] = None,
+        stdev: Optional[float] = None,
+        stdev_err: Optional[float] = None,
+        X2norm: Optional[float] = None,
+        Ngood: Optional[int] = None,
+        Nclip: Optional[int] = None,
+        Nchanged: Optional[int] = None,
+        Nmask: Optional[int] = None,
+        Nnan: Optional[int] = None,
+        ix_good: Optional[List[int]] = None,
+        ix_clip: Optional[List[int]] = None,
+    ):
+        self.mean = mean
+        self.mean_err = mean_err
+        self.stdev = stdev
+        self.stdev_err = stdev_err
+        self.X2norm = X2norm
+        self.Nclip = Nclip
+        self.Ngood = Ngood
+        self.Nchanged = Nchanged
+        self.Nmask = Nmask
+        self.Nnan = Nnan
+        self.ix_good = ix_good
+        self.ix_clip = ix_clip
+
+    def reset(self):
+        self.update_iteration()
+
+
+class SigmaClipper:
+    def __init__(self, verbose: bool = False):
+        self.logger = CustomLogger(verbose=verbose)
+
+        self.statparams = StatParams()
+        self.converged = False
+        self.i = 0
+
+        self.c4_smalln = [
+            0.0,
+            0.0,
+            0.7978845608028654,
+            0.8862269254527579,
+            0.9213177319235613,
+            0.9399856029866251,
+            0.9515328619481445,
+        ]
+
+    @staticmethod
+    def c4(self, n) -> float:
+        """http://en.wikipedia.org/wiki/Unbiased_estimation_of_standard_deviation"""
+        if n <= 6:
+            return self.c4_smalln[n]
+        else:
+            return (
+                1.0
+                - 1.0 / (4.0 * n)
+                - 7.0 / (32.0 * n * n)
+                - 19.0 / (128.0 * n * n * n)
+            )
+
+    @staticmethod
+    def get_indices(default_length, indices=None) -> np.ndarray:
+        if indices is None:
+            return np.arange(default_length)
+        else:
+            return np.asarray(indices)
+
+    @staticmethod
+    def ix_inrange(
+        arr,
+        lowlim=None,
+        uplim=None,
+        indices=None,
+        exclude_lowlim=False,
+        exclude_uplim=False,
+    ) -> np.ndarray:
+        indices = SigmaClipper.get_indices(len(arr), indices=indices)
+        values = arr[indices]
+        keep_mask = np.ones(len(indices), dtype=bool)
+
+        if lowlim is not None:
+            if exclude_lowlim:
+                keep_mask &= values > lowlim
+            else:
+                keep_mask &= values >= lowlim
+
+        if uplim is not None:
+            if exclude_uplim:
+                keep_mask &= values < uplim
+            else:
+                keep_mask &= values <= uplim
+
+        return indices[keep_mask]
+
+    @staticmethod
+    def ix_unmasked(mask_arr, mask_val=None, indices=None) -> np.ndarray:
+        indices = SigmaClipper.get_indices(len(mask_arr), indices=indices)
+
+        sub_mask = mask_arr[indices]
+        if mask_val is None:
+            keep = sub_mask == 0
+        else:
+            keep = bitmask.bitfield_to_boolean_mask(
+                sub_mask.astype(int),
+                ignore_flags=~mask_val,
+                good_mask_value=True,
+            )
+
+        return indices[keep]
+
+    @staticmethod
+    def ix_not_null(arrays: List[np.ndarray], indices=None) -> np.ndarray:
+        if len(arrays) == 0:
+            return np.array([], dtype=int)
+        indices = SigmaClipper.get_indices(len(arrays[0]), indices=indices)
+
+        keep_mask = np.ones(len(indices), dtype=bool)
+        for arr in arrays:
+            keep_mask &= pd.notnull(arr[indices])
+
+        return indices[keep_mask]
+
+    def reset(self):
+        self.statparams = StatParams()
+        self.converged = False
+        self.i = 0
+
+    def calcaverage_errorcut(
+        self, data, noise, indices=None, mean=None, Nsigma=None, median_flag=False
+    ):
+        indices = SigmaClipper.get_indices(len(data), indices=indices)
+        x = data[indices]
+        dx = noise[indices]
+
+        if Nsigma is not None and mean is not None:
+            diff = np.abs(x - mean)
+            good_ix = indices[diff <= Nsigma * dx]
+            good_ix_bkp = deepcopy(self.statparams.ix_good)
+        else:
+            good_ix = indices
+            good_ix_bkp = None
+
+        Ngood = len(good_ix)
+
+        if Ngood > 1:
+            x_good = data[good_ix]
+            dx_good = noise[good_ix]
+            if median_flag:
+                mean = np.median(x_good)
+                stdev = np.sqrt(
+                    np.sum((x_good - mean) ** 2.0) / (Ngood - 1.0)
+                ) / self.c4(Ngood)
+                mean_err = np.median(dx_good) / np.sqrt(Ngood - 1)
+            else:
+                w = 1.0 / (dx_good**2.0)
+                mean = np.sum(x_good * w) / np.sum(w)
+                mean_err = np.sqrt(1.0 / np.sum(w))
+                stdev = np.std(x_good, ddof=1)
+
+            stdev_err = stdev / np.sqrt(2.0 * Ngood)
+            X2norm = np.sum(((x_good - mean) / dx_good) ** 2.0) / (Ngood - 1.0)
+        elif Ngood == 1:
+            mean = data[good_ix[0]]
+            mean_err = noise[good_ix[0]]
+            stdev = stdev_err = X2norm = None
+        else:
+            mean = mean_err = stdev = stdev_err = X2norm = None
+
+        self.statparams.update_iteration(
+            mean,
+            mean_err,
+            stdev,
+            stdev_err,
+            X2norm,
+            Ngood,
+            good_ix,
+            len(indices) - Ngood,
+            AnotB(indices, good_ix),
+            len(not_AandB(good_ix_bkp, good_ix)) if good_ix_bkp is not None else 0,
+        )
+
+        return int(Ngood < 1)
+
+    def calcaverage_sigmacut(
+        self,
+        data,
+        noise=None,
+        indices=None,
+        mean=None,
+        stdev=None,
+        Nsigma=None,
+        percentile_cut=None,
+        percentile_Nmin=3,
+        median_flag=False,
+    ):
+        indices = SigmaClipper.get_indices(len(data), indices=indices)
+        if len(indices) == 0:
+            self.reset()
+            self.logger.warning("No data passed for sigma cut")
+            return 2
+
+        x = data[indices]
+
+        good_ix_bkp = None
+        if percentile_cut is None or len(indices) <= percentile_Nmin:
+            # if N-sigma cut and second iteration (i.e. we have a stdev from the first iteration), skip bad measurements
+            if Nsigma is not None and stdev is not None and mean is not None:
+                good_ix_bkp = deepcopy(self.statparams["ix_good"])
+                good_ix = indices[np.abs(x - mean) <= Nsigma * stdev]
+            else:
+                good_ix = indices
+        else:  # percentile clipping
+            if mean is None:
+                mean = np.median(x) if median_flag else np.mean(x)
+            residuals = np.abs(x - mean)
+            max_residual = np.percentile(residuals, percentile_cut)
+            good_ix = indices[residuals < max_residual]
+
+            if len(good_ix) < percentile_Nmin:
+                sorted_residuals = np.sort(residuals)
+                max_residual = sorted_residuals[percentile_Nmin - 1]
+                good_ix = indices[residuals < max_residual]
+
+        Ngood = len(good_ix)
+        x_good = data[good_ix]
+
+        if Ngood > 1:
+            if median_flag:
+                mean = np.median(x_good)
+                stdev = np.sqrt(np.sum((x_good - mean) ** 2) / (Ngood - 1.0)) / self.c4(
+                    Ngood
+                )
+            else:
+                mean = np.mean(x_good)
+                stdev = np.std(x_good, ddof=1)
+
+            mean_err = stdev / np.sqrt(Ngood - 1.0)
+            stdev_err = stdev / np.sqrt(2.0 * Ngood)
+            if noise is None:
+                X2norm = np.sum(((x_good - mean) / stdev) ** 2) / (Ngood - 1.0)
+            else:
+                dx_good = noise[good_ix]
+                X2norm = np.sum(((x_good - mean) / dx_good) ** 2) / (Ngood - 1.0)
+        elif Ngood == 1:
+            mean = x_good[0]
+            mean_err = noise[good_ix[0]] if noise is not None else None
+            stdev = stdev_err = X2norm = None
+        else:
+            mean = mean_err = stdev = stdev_err = X2norm = None
+
+        self.statparams.update_iteration(
+            mean,
+            mean_err,
+            stdev,
+            stdev_err,
+            X2norm,
+            Ngood,
+            good_ix,
+            len(indices) - Ngood,
+            AnotB(indices, good_ix),
+            len(not_AandB(good_ix_bkp, good_ix)) if good_ix_bkp is not None else 0,
+        )
+
+        return int(Ngood < 1)
+
+    def calcaverage_sigmacutloop(
+        self,
+        data_arr: np.ndarray,
+        indices=None,
+        noise_arr: Optional[np.ndarray] = None,
+        mask_arr: Optional[np.ndarray] = None,
+        mask_val: float = None,
+        Nsigma: float = 3.0,
+        N_max_iterations: int = 10,
+        removeNaNs: bool = True,
+        sigmacut_flag: bool = False,
+        percentile_cut_firstiteration=None,
+        median_firstiteration: bool = True,
+    ):
+        self.reset()
+        if noise_arr is None:
+            sigmacut_flag = True
+        indices = SigmaClipper.get_indices(len(data_arr), indices=indices)
+
+        # exclude data if wanted
+        if mask_arr is not None:
+            Ntot = len(indices)
+            indices = SigmaClipper.ix_unmasked(
+                mask_arr, mask_val=mask_val, indices=indices
+            )
+            self.statparams.Nmask = Ntot - len(indices)
+            self.logger.info(
+                f"Keeping {len(indices)} out of {Ntot}, skipping {Ntot - len(indices)} because of masking (maskval={mask_val})"
+            )
+        else:
+            self.statparams.Nmask = 0
+
+        # remove null values if wanted
+        if removeNaNs:
+            arrays = [data_arr]
+            if noise_arr is not None:
+                arrays.append(noise_arr)
+            if mask_arr is not None:
+                arrays.append(mask_arr)
+
+            Ntot = len(indices)
+            indices = SigmaClipper.ix_not_null(arrays, indices=indices)
+            self.statparams.Nnan = Ntot - len(indices)
+            self.logger.info(
+                f"NaN filtering: kept {len(indices)} / {Ntot}, removed {Ntot - len(indices)}"
+            )
+        else:
+            self.statparams.Nnan = 0
+
+        for i in range(N_max_iterations):
+            if self.converged:
+                break
+            self.i = i
+
+            median_flag = median_firstiteration and i == 0 and Nsigma is not None
+            percentile_cut = percentile_cut_firstiteration if i == 0 else None
+
+            if sigmacut_flag:
+                error_flag = self.calcaverage_sigmacut(
+                    data_arr,
+                    noise=noise_arr,
+                    indices=indices,
+                    mean=self.statparams.mean,
+                    stdev=self.statparams.stdev,
+                    Nsigma=Nsigma,
+                    median_flag=median_flag,
+                    percentile_cut=percentile_cut,
+                )
+            else:
+                error_flag = self.calcaverage_errorcut(
+                    data_arr,
+                    noise=noise_arr,
+                    indices=indices,
+                    mean=self.statparams.mean,
+                    Nsigma=Nsigma,
+                    median_flag=median_flag,
+                )
+
+            if (
+                error_flag
+                or self.statparams.stdev is None
+                or (self.statparams.stdev == 0.0 and sigmacut_flag)
+                or self.statparams.mean is None
+            ):
+                self.converged = False
+                break
+
+            if Nsigma in (None, 0.0):
+                self.converged = True
+                break
+
+            if i > 0 and self.statparams.Nchanged == 0 and not median_flag:
+                self.converged = True
+                break
+
+        if not self.converged:
+            self.logger.warning("No convergence")
+        return not self.converged
 
 
 class PrimaryFlag:
