@@ -33,33 +33,86 @@ C4_SMALL_N = [
 
 
 class CustomLogger:
+    """
+    Simple custom logger that prints messages to stdout when verbose is enabled.
+    """
+
     def __init__(self, verbose: bool = False):
+        """
+        Initialize the logger.
+
+        :param verbose: If True, messages will be printed.
+        """
         self.verbose = verbose
 
     def info(self, text: str, prefix="", newline: bool = False):
+        """
+        Print an info message if verbose is enabled.
+
+        :param text: Message content.
+        :param prefix: Optional prefix (e.g. "WARNING: ").
+        :param newline: Whether to prepend a newline before the message.
+        """
         newline_part = "\n" if newline else ""
         if self.verbose:
             print(f"{newline_part}{prefix}{text}")
 
     def warning(self, text: str, newline: bool = False):
+        """
+        Print a warning message.
+
+        :param text: Message content.
+        :param newline: Whether to prepend a newline before the message.
+        """
         self.info(text, prefix="WARNING: ", newline=newline)
 
     def error(self, text: str, newline: bool = False):
+        """
+        Print an error message.
+
+        :param text: Message content.
+        :param newline: Whether to prepend a newline before the message.
+        """
         self.info(text, prefix="ERROR: ", newline=newline)
 
     def success(self, text: str = "Success", newline: bool = False):
+        """
+        Print a success message.
+
+        :param text: Message content.
+        :param newline: Whether to prepend a newline before the message.
+        """
         self.info(text, newline=newline)
 
 
-def hexstring_to_int(hexstring):
+def hexstring_to_int(hexstring: str):
+    """
+    Convert a hexadecimal string to an integer.
+
+    :param hexstring: Hex string (e.g. "0x10").
+    :return: Integer value.
+    """
     return int(hexstring, 16)
 
 
 def combine_flags(flags: List[int]) -> int:
+    """
+    Bitwise OR a list of integer flags into a single integer.
+
+    :param flags: List of flag values.
+    :return: Combined flag as integer.
+    """
     return reduce(lambda x, y: x | y, flags, 0)
 
 
 def new_row(t: Optional[pd.DataFrame], d: Optional[Dict] = None):
+    """
+    Append a new row to a DataFrame (or create one if empty).
+
+    :param t: Original DataFrame or None.
+    :param d: Dictionary representing a single row.
+    :return: New DataFrame with the row added.
+    """
     if d is None:
         d = {}
 
@@ -73,20 +126,36 @@ def new_row(t: Optional[pd.DataFrame], d: Optional[Dict] = None):
 
 
 class BaseAngle(ABC):
+    """
+    Abstract base class for angle parsing (RA or Dec).
+    """
+
     def __init__(self, angle: str | Angle):
+        """
+        Initialize with an angle string or astropy Angle.
+
+        :param angle: Input angle (string or Angle).
+        """
         self.angle: Angle = (
             self._parse_angle(angle) if isinstance(angle, str) else angle
         )
 
     @abstractmethod
     def _parse_angle(self, string: str) -> Angle:
-        """Abstract method to be implemented by subclasses to parse angles."""
+        """
+        Abstract method to parse string input into Angle.
+
+        :param string: Input angle string.
+        :return: Parsed Angle object.
+        """
         pass
 
 
 class RA(BaseAngle):
     def _parse_angle(self, string: str) -> Angle:
-        """Parse RA angle, using hours if ':' is present, degrees otherwise."""
+        """
+        Parse RA angle, using hours if ':' is present, degrees otherwise.
+        """
         s = re.compile(":")
         if isinstance(string, str) and s.search(string):
             return Angle(string, u.hour)
@@ -96,22 +165,50 @@ class RA(BaseAngle):
 
 class Dec(BaseAngle):
     def _parse_angle(self, string: str) -> Angle:
-        """Parse Dec angle, always using degrees."""
+        """
+        Parse Dec angle, always using degrees.
+        """
         return Angle(string, u.degree)
 
 
 class Coordinates:
+    """
+    Object representing sky coordinates (RA, Dec).
+    """
+
     def __init__(self, ra: str | Angle | RA, dec: str | Angle | Dec):
+        """
+        Initialize coordinates from raw strings, astropy Angles, or RA/Dec objects.
+
+        :param ra: Right Ascension.
+        :param dec: Declination.
+        """
         self.ra: RA = RA(ra) if not isinstance(ra, RA) else ra
         self.dec: Dec = Dec(dec) if not isinstance(dec, Dec) else dec
 
     def get_RA_str(self) -> str:
+        """
+        Return RA in degrees with high precision.
+
+        :return: RA string in degrees.
+        """
         return f"{self.ra.angle.degree:0.14f}"
 
     def get_Dec_str(self) -> str:
+        """
+        Return Dec in degrees with high precision.
+
+        :return: Dec string in degrees.
+        """
         return f"{self.dec.angle.degree:0.14f}"
 
     def get_distance(self, other: Self) -> Angle:
+        """
+        Compute angular separation from another coordinate.
+
+        :param other: Other Coordinates object.
+        :return: Angular separation as Angle.
+        """
         c1 = SkyCoord(self.ra.angle, self.dec.angle, frame="fk5")
         c2 = SkyCoord(other.ra.angle, other.dec.angle, frame="fk5")
         return c1.separation(c2)
@@ -121,6 +218,13 @@ class Coordinates:
 
 
 def parse_comma_separated_string(string: Optional[str]):
+    """
+    Parse a comma-separated string into a list of stripped strings.
+
+    :param string: Input string like "RA, Dec".
+    :return: List of strings or None.
+    :raises RuntimeError: If parsing fails.
+    """
     if string is None:
         return None
 
@@ -133,6 +237,13 @@ def parse_comma_separated_string(string: Optional[str]):
 
 
 def parse_arg_coords(arg_coords: Optional[str]) -> Optional[Coordinates]:
+    """
+    Parse a comma-separated string (i.e., a coordinates argument string, e.g., --center_coords) into a Coordinates object.
+
+    :param arg_coords: Comma-separated RA and Dec string.
+    :return: Coordinates object or None.
+    :raises RuntimeError: If parsing fails or format is invalid.
+    """
     parsed_coords = parse_comma_separated_string(arg_coords)
     if parsed_coords is None:
         return None
@@ -149,12 +260,23 @@ def parse_arg_coords(arg_coords: Optional[str]) -> Optional[Coordinates]:
 
 
 class ColumnNames:
+    """
+    Utility class for managing required and optional column name mappings.
+    """
+
     def __init__(
         self,
         required_colnames: Optional[Dict[str, str]] = None,
         optional_colnames: Optional[Dict[str, str]] = None,
         verbose: bool = False,
     ):
+        """
+        Initialize ColumnNames with dictionaries of required and optional column mappings.
+
+        :param required_colnames: Mapping of internal keys to required column names.
+        :param optional_colnames: Mapping of internal keys to optional column names.
+        :param verbose: Whether to enable verbose logging.
+        """
         self.logger = CustomLogger(verbose=verbose)
 
         self._required_colnames = (
@@ -166,19 +288,37 @@ class ColumnNames:
 
     @property
     def required(self) -> Set:
+        """
+        Return the set of required column names.
+        """
         return set(self._required_colnames.values())
 
     @property
     def optional(self) -> Set:
+        """
+        Return the set of optional column names.
+        """
         return set(self._optional_colnames.values())
 
     @property
     def all(self) -> Set:
+        """
+        Return the set of all column names (required + optional).
+        """
         return self.required.union(self.optional)
 
     def add(
         self, key: str, name: str, is_required: bool = False, overwrite: bool = False
     ):
+        """
+        Add a single column name mapping.
+
+        :param key: Internal key name.
+        :param name: Actual column name used in the dataframe.
+        :param is_required: Whether the column is required.
+        :param overwrite: Whether to allow overwriting an existing mapping.
+        :raises ValueError: If the key or name is invalid.
+        """
         if not isinstance(key, str) or not key.strip():
             raise ValueError("Column key must be a non-empty string")
         if not isinstance(name, str) or not name.strip():
@@ -199,10 +339,24 @@ class ColumnNames:
             self._optional_colnames[key] = name
 
     def add_many(self, coldict: Dict[str, str], is_required: bool = False):
+        """
+        Add multiple column name mappings.
+
+        :param coldict: Dictionary of key-to-name mappings.
+        :param is_required: Whether these columns are required.
+        """
         for key, name in coldict.items():
             self.add(key, name, is_required=is_required)
 
     def update(self, key: str, name: str, is_required: bool = False):
+        """
+        Update an existing column name mapping.
+
+        :param key: Internal key name.
+        :param name: New column name.
+        :param is_required: Whether the column is required.
+        :raises RuntimeError: If the key does not exist.
+        """
         if is_required:
             if key not in self._required_colnames:
                 raise RuntimeError(
@@ -217,19 +371,44 @@ class ColumnNames:
             self._optional_colnames[key] = name
 
     def update_many(self, coldict: Dict[str, str], is_required: bool = False):
+        """
+        Update multiple column name mappings.
+
+        :param coldict: Dictionary of key-to-name updates.
+        :param is_required: Whether these columns are required.
+        """
         for key, name in coldict.items():
             self.update(key, name, is_required=is_required)
 
     def remove(self, key: str):
+        """
+        Remove a column name mapping by key.
+        """
         if key in self._required_colnames:
             del self._required_colnames[key]
         if key in self._optional_colnames:
             del self._optional_colnames[key]
 
     def has(self, name: str):
+        """
+        Check if a column name is defined (in required or optional).
+        """
         return name in self._required_colnames or name in self._optional_colnames
 
     def __getattr__(self, name: str) -> Optional[str]:
+        """
+        Allow attribute-style access to column names by key.
+
+        Example:
+        1. `c = ColumnNames()`
+        2. `c.add("mjd", "MJD")`
+
+        Now `c.mjd` returns `"MJD"`.
+
+        :param name: Internal key name.
+        :return: Column name string.
+        :raises AttributeError: If key is not found.
+        """
         try:
             # Safely access dicts without triggering __getattr__
             required_colnames = object.__getattribute__(self, "_required_colnames")
@@ -248,7 +427,6 @@ class ColumnNames:
         raise AttributeError(f"{name} not found in column names")
 
     def __str__(self) -> str:
-        """Readable string representation of all column names."""
         skip_colnames = ["mjdbin", "fdf", "mask"]
 
         lines = ["-- Required Columns --"]
@@ -265,6 +443,10 @@ class ColumnNames:
 
 
 class CleanedColumnNames(ColumnNames):
+    """
+    Predefined column names for cleaned light curve data.
+    """
+
     def __init__(self):
         required_colnames = {
             "mjd": "MJD",
@@ -285,6 +467,10 @@ class CleanedColumnNames(ColumnNames):
 
 
 class BinnedColumnNames(ColumnNames):
+    """
+    Predefined column names for binned light curve data.
+    """
+
     def __init__(self):
         required_colnames = {
             "mjdbin": "MJDbin",
@@ -309,7 +495,16 @@ class BinnedColumnNames(ColumnNames):
 
 
 class StatParams:
+    """
+    Container for storing statistical parameters from SigmaClipper results.
+    """
+
     def __init__(self, d: Optional[Dict[str, int | float | List[int] | None]] = None):
+        """
+        Initialize the StatParams object from a dictionary, or set all fields to None.
+
+        :param d: Optional dictionary with initial values for fields.
+        """
         self.FIELDS = [
             "mean",
             "mean_err",
@@ -331,20 +526,40 @@ class StatParams:
             self.from_dict({})
 
     def from_dict(self, d: Dict[str, int | float | None]):
+        """
+        Load values from a dictionary into the object's fields; only those in FIELDS are considered.
+
+        :param d: Dictionary containing keys from self.FIELDS.
+        """
         for key in self.FIELDS:
             setattr(self, key, d.get(key))
 
     def update(self, **kwargs):
+        """
+        Update fields with values from keyword arguments.
+
+        :param kwargs: Named values to update; only those in self.FIELDS are considered.
+        """
         for key in self.FIELDS:
             val = kwargs.get(key, None)
             if val is not None:
                 setattr(self, key, val)
 
     def reset(self):
+        """
+        Reset all fields to None.
+        """
         for key in self.FIELDS:
             setattr(self, key, None)
 
     def get_row(self, prefix="", skip=None) -> Dict[str, float]:
+        """
+        Convert parameters to a dictionary row for output (e.g., to a DataFrame).
+
+        :param prefix: Optional string to prefix each key.
+        :param skip: Optional list of field names to skip.
+        :return: Dictionary mapping of (possibly prefixed) field names to values.
+        """
         skip = set(skip or [])
         row = {}
 
@@ -371,6 +586,10 @@ class StatParams:
 
 
 class SigmaClipper:
+    """
+    Class for performing sigma clipping and robust averaging on numerical data.
+    """
+
     def __init__(self, verbose: bool = False):
         self.logger = CustomLogger(verbose=verbose)
 
@@ -380,6 +599,12 @@ class SigmaClipper:
 
     @staticmethod
     def c4(n) -> float:
+        """
+        Returns the correction factor for the unbiased estimation of standard deviation.
+
+        :param n: Sample size.
+        :return: Correction factor.
+        """
         """http://en.wikipedia.org/wiki/Unbiased_estimation_of_standard_deviation"""
         if n <= 6:
             return C4_SMALL_N[n]
@@ -393,6 +618,14 @@ class SigmaClipper:
 
     @staticmethod
     def get_indices(default_length, indices=None) -> np.ndarray:
+        """
+        Get an array of indices.
+        If no indices given, get all indices of array using default_length.
+
+        :param default_length: Length of the array to index.
+        :param indices: Optional array of indices to use.
+        :return: Array of indices.
+        """
         if indices is None:
             return np.arange(default_length)
         else:
@@ -407,6 +640,17 @@ class SigmaClipper:
         exclude_lowlim=False,
         exclude_uplim=False,
     ) -> np.ndarray:
+        """
+        Returns indices where values are within specified limits.
+
+        :param arr: Input array of values.
+        :param lowlim: Lower bound for clipping.
+        :param uplim: Upper bound for clipping.
+        :param indices: Optional subset of indices to check.
+        :param exclude_lowlim: If True, exclude values equal to lowlim.
+        :param exclude_uplim: If True, exclude values equal to uplim.
+        :return: Array of filtered indices.
+        """
         indices = SigmaClipper.get_indices(len(arr), indices=indices)
         values = arr[indices]
         keep_mask = np.ones(len(indices), dtype=bool)
@@ -427,6 +671,14 @@ class SigmaClipper:
 
     @staticmethod
     def ix_unmasked(mask_arr, mask_val=None, indices=None) -> np.ndarray:
+        """
+        Returns indices of unmasked entries.
+
+        :param mask_arr: Array of bitmask values.
+        :param mask_val: Bitmask flag to test against.
+        :param indices: Optional subset of indices.
+        :return: Array of unmasked indices.
+        """
         indices = SigmaClipper.get_indices(len(mask_arr), indices=indices)
 
         sub_mask = mask_arr[indices]
@@ -443,6 +695,13 @@ class SigmaClipper:
 
     @staticmethod
     def ix_not_null(arrays: List[np.ndarray], indices=None) -> np.ndarray:
+        """
+        Returns indices where all arrays have non-null values.
+
+        :param arrays: List of arrays to check.
+        :param indices: Optional subset of indices.
+        :return: Array of indices with non-null values across all arrays.
+        """
         if len(arrays) == 0:
             return np.array([], dtype=int)
         indices = SigmaClipper.get_indices(len(arrays[0]), indices=indices)
@@ -454,16 +713,36 @@ class SigmaClipper:
         return indices[keep_mask]
 
     def reset(self):
+        """
+        Resets the internal state before a new sigma clipping run.
+        """
         self.statparams = StatParams()
         self.converged = False
         self.i = 0
 
     def calcaverage_errorcut(
-        self, data, noise, indices=None, mean=None, Nsigma=None, median_flag=False
+        self,
+        data_arr: np.ndarray,
+        noise_arr: np.ndarray,
+        indices=None,
+        mean: Optional[float] = None,
+        Nsigma: Optional[float] = None,
+        median_flag: bool = False,
     ):
-        indices = SigmaClipper.get_indices(len(data), indices=indices)
-        x = data[indices]
-        dx = noise[indices]
+        """
+        Computes clipped mean and standard deviation based on individual errors.
+
+        :param data_arr: Array of data.
+        :param noise_arr: Array of uncertainties for each data point.
+        :param indices: Optional subset of indices to operate on.
+        :param mean: Initial guess for mean value.
+        :param Nsigma: Sigma threshold for clipping.
+        :param median_flag: Use median instead of weighted mean.
+        :return: 1 if fewer than one good point, else 0.
+        """
+        indices = SigmaClipper.get_indices(len(data_arr), indices=indices)
+        x = data_arr[indices]
+        dx = noise_arr[indices]
 
         if Nsigma is not None and mean is not None:
             diff = np.abs(x - mean)
@@ -476,8 +755,8 @@ class SigmaClipper:
         Ngood = len(good_ix)
 
         if Ngood > 1:
-            x_good = data[good_ix]
-            dx_good = noise[good_ix]
+            x_good = data_arr[good_ix]
+            dx_good = noise_arr[good_ix]
             if median_flag:
                 mean = np.median(x_good)
                 stdev = np.sqrt(
@@ -493,8 +772,8 @@ class SigmaClipper:
             stdev_err = stdev / np.sqrt(2.0 * Ngood)
             X2norm = np.sum(((x_good - mean) / dx_good) ** 2.0) / (Ngood - 1.0)
         elif Ngood == 1:
-            mean = data[good_ix[0]]
-            mean_err = noise[good_ix[0]]
+            mean = data_arr[good_ix[0]]
+            mean_err = noise_arr[good_ix[0]]
             stdev = stdev_err = X2norm = None
         else:
             mean = mean_err = stdev = stdev_err = X2norm = None
@@ -518,23 +797,37 @@ class SigmaClipper:
 
     def calcaverage_sigmacut(
         self,
-        data,
-        noise=None,
+        data_arr: np.ndarray,
+        noise_arr: Optional[np.ndarray] = None,
         indices=None,
-        mean=None,
-        stdev=None,
-        Nsigma=None,
-        percentile_cut=None,
-        percentile_Nmin=3,
-        median_flag=False,
+        mean: Optional[float] = None,
+        stdev: Optional[float] = None,
+        Nsigma: Optional[float] = None,
+        percentile_cut: bool = None,
+        percentile_Nmin: Optional[float] = 3,
+        median_flag: bool = False,
     ):
-        indices = SigmaClipper.get_indices(len(data), indices=indices)
+        """
+        Computes clipped statistics using either sigma or percentile clipping.
+
+        :param data_arr: Array of data.
+        :param noise_arr: Optional array of uncertainties for each data point.
+        :param indices: Optional subset of indices.
+        :param mean: Initial guess for the mean.
+        :param stdev: Initial guess for standard deviation.
+        :param Nsigma: Sigma threshold for clipping.
+        :param percentile_cut: Percentile cutoff for clipping residuals.
+        :param percentile_Nmin: Minimum number of points for percentile clipping.
+        :param median_flag: Use median for mean calculation.
+        :return: 1 if fewer than one good point, else 0.
+        """
+        indices = SigmaClipper.get_indices(len(data_arr), indices=indices)
         if len(indices) == 0:
             self.reset()
             self.logger.warning("No data passed for sigma cut")
             return 2
 
-        x = data[indices]
+        x = data_arr[indices]
 
         good_ix_bkp = None
         if percentile_cut is None or len(indices) <= percentile_Nmin:
@@ -557,7 +850,7 @@ class SigmaClipper:
                 good_ix = indices[residuals < max_residual]
 
         Ngood = len(good_ix)
-        x_good = data[good_ix]
+        x_good = data_arr[good_ix]
 
         if Ngood > 1:
             if median_flag:
@@ -571,14 +864,14 @@ class SigmaClipper:
 
             mean_err = stdev / np.sqrt(Ngood - 1.0)
             stdev_err = stdev / np.sqrt(2.0 * Ngood)
-            if noise is None:
+            if noise_arr is None:
                 X2norm = np.sum(((x_good - mean) / stdev) ** 2) / (Ngood - 1.0)
             else:
-                dx_good = noise[good_ix]
+                dx_good = noise_arr[good_ix]
                 X2norm = np.sum(((x_good - mean) / dx_good) ** 2) / (Ngood - 1.0)
         elif Ngood == 1:
             mean = x_good[0]
-            mean_err = noise[good_ix[0]] if noise is not None else None
+            mean_err = noise_arr[good_ix[0]] if noise_arr is not None else None
             stdev = stdev_err = X2norm = None
         else:
             mean = mean_err = stdev = stdev_err = X2norm = None
@@ -609,11 +902,27 @@ class SigmaClipper:
         mask_val: float = None,
         Nsigma: float = 3.0,
         N_max_iterations: int = 10,
-        removeNaNs: bool = True,
+        remove_nan: bool = True,
         sigmacut_flag: bool = False,
         percentile_cut_firstiteration=None,
         median_firstiteration: bool = True,
     ):
+        """
+        Runs iterative sigma or error clipping until convergence or maximum iterations.
+
+        :param data_arr: Array of data values.
+        :param indices: Optional initial indices.
+        :param noise_arr: Optional array of uncertainties.
+        :param mask_arr: Optional mask array to exclude data.
+        :param mask_val: Bitmask value used to determine exclusion.
+        :param Nsigma: Sigma threshold for clipping.
+        :param N_max_iterations: Maximum number of iterations to run.
+        :param remove_nan: Whether to exclude NaN entries.
+        :param sigmacut_flag: Whether to use sigma clipping (vs error clipping).
+        :param percentile_cut_firstiteration: Optional percentile clipping for first iteration.
+        :param median_firstiteration: Use median in first iteration.
+        :return: True if not converged, False if converged.
+        """
         self.reset()
         if noise_arr is None:
             sigmacut_flag = True
@@ -633,7 +942,7 @@ class SigmaClipper:
             self.statparams.Nmask = 0
 
         # remove null values if wanted
-        if removeNaNs:
+        if remove_nan:
             arrays = [data_arr]
             if noise_arr is not None:
                 arrays.append(noise_arr)
@@ -660,7 +969,7 @@ class SigmaClipper:
             if sigmacut_flag:
                 error_flag = self.calcaverage_sigmacut(
                     data_arr,
-                    noise=noise_arr,
+                    noise_arr=noise_arr,
                     indices=indices,
                     mean=self.statparams.mean,
                     stdev=self.statparams.stdev,
@@ -671,7 +980,7 @@ class SigmaClipper:
             else:
                 error_flag = self.calcaverage_errorcut(
                     data_arr,
-                    noise=noise_arr,
+                    noise_arr,
                     indices=indices,
                     mean=self.statparams.mean,
                     Nsigma=Nsigma,
@@ -701,12 +1010,18 @@ class SigmaClipper:
 
 
 class PrimaryFlag:
-    def __init__(
-        self,
-        name: str,
-        value: int,
-        description: Optional[str] = None,
-    ):
+    """
+    Represents a primary bitmask flag used to describe a cut condition.
+    """
+
+    def __init__(self, name: str, value: int, description: Optional[str] = None):
+        """
+        Initialize a PrimaryFlag.
+
+        :param name: Name of the flag.
+        :param value: Integer value of the bitmask flag.
+        :param description: Optional description of the flag.
+        """
         self.name = name
         self.description = description
         self.value = value
@@ -714,6 +1029,9 @@ class PrimaryFlag:
 
     @property
     def hex(self):
+        """
+        Return the hexadecimal string representation of the flag value.
+        """
         return hex(self.value)
 
     def __str__(self):
@@ -721,12 +1039,27 @@ class PrimaryFlag:
 
 
 class Flag(PrimaryFlag):
-    def __init__(self, name, value, description=None):
+    """
+    Represents a secondary bitmask flag associated with a cut.
+    """
+
+    def __init__(self, name: str, value: int, description: Optional[str] = None):
+        """
+        Initialize a secondary Flag.
+
+        :param name: Name of the flag.
+        :param value: Integer value of the bitmask flag.
+        :param description: Optional description of the flag.
+        """
         super().__init__(name, value, description)
         self._is_primary = False
 
 
 class Cut:
+    """
+    Represents a named cut with an optional primary flag and optional secondary flags.
+    """
+
     def __init__(
         self,
         name: str,
@@ -735,6 +1068,15 @@ class Cut:
         description: Optional[str] = None,
         verbose: bool = False,
     ):
+        """
+        Initialize a Cut with flags and metadata.
+
+        :param name: Name of the cut.
+        :param primary_flag: PrimaryFlag associated with the cut.
+        :param secondary_flags: List of secondary Flag objects.
+        :param description: Optional description of the cut.
+        :param verbose: Whether to enable verbose logging.
+        """
         self.name = name
         self.description: Optional[str] = description
         self._primary_flag: Optional[PrimaryFlag] = primary_flag
@@ -749,9 +1091,19 @@ class Cut:
         return self._primary_flag
 
     def has_secondary_flag(self, name: str):
+        """
+        Check if a secondary flag with the given name exists.
+        """
         return name in self._secondary_flags
 
     def add_flag(self, flag: Flag | PrimaryFlag):
+        """
+        Add a primary or secondary flag to the cut.
+        If a primary flag or a secondary flag with the same name already exists, overwrite it.
+
+        :param flag: Flag to add (either primary or secondary).
+        :raises ValueError: If a primary flag name conflicts with existing secondary flag.
+        """
         if isinstance(flag, Flag):
             if self.has_secondary_flag(flag.name):
                 self.logger.warning(
@@ -772,6 +1124,13 @@ class Cut:
         pass
 
     def get_flag(self, name: str):
+        """
+        Retrieve a flag by name (primary or secondary).
+
+        :param name: Name of the flag.
+        :return: The corresponding Flag or PrimaryFlag object.
+        :raises ValueError: If the flag does not exist.
+        """
         if self._primary_flag is not None and name == self._primary_flag.name:
             return self._primary_flag
 
@@ -781,6 +1140,9 @@ class Cut:
         return self._secondary_flags[name]
 
     def get_combined_flags_value(self) -> int:
+        """
+        Return the combined integer value of all flags in the cut.
+        """
         flags = [flag.value for flag in self._secondary_flags.values()]
         if self._primary_flag is not None:
             flags.append(self._primary_flag.value)
@@ -797,30 +1159,51 @@ class Cut:
 
 
 class CutHistory:
+    """
+    Tracks and manages the history of applied cuts.
+    """
+
     def __init__(self, verbose: bool = False):
         self._cuts: OrderedDict[str, Cut] = OrderedDict()
         self.logger = CustomLogger(verbose=verbose)
 
     def has(self, name: str):
+        """
+        Check if a cut with the given name exists.
+        """
         return name in self._cuts
 
     @property
     def cuts(self):
-        """Return ordered list of applied cuts"""
+        """
+        Return ordered list of applied cuts.
+        """
         return list(self._cuts.values())
 
     def add(self, cut: Cut):
+        """
+        Add a cut to the history.
+        """
         if cut.name in self._cuts:
             self.logger.warning(f"Cut '{cut.name}' already exists; overwriting...")
         self._cuts[cut.name] = cut
 
     def remove(self, name: str):
+        """
+        Remove a cut by name.
+        """
         if name in self._cuts:
             del self._cuts[name]
         else:
             self.logger.warning(f"Cannot remove nonexistent cut '{name}'")
 
     def add_UncertaintyCut(self, flag: int = 0x2, max_value: float = 160):
+        """
+        Add a cut for high measurement uncertainty.
+
+        :param flag: Bitmask flag value.
+        :param max_value: Maximum acceptable uncertainty.
+        """
         flag = PrimaryFlag(
             "high_uncertainty",
             flag,
@@ -830,6 +1213,11 @@ class CutHistory:
         self.add(cut)
 
     def add_UncertaintyEstimation(self, temp_x2_max_value: float = 20):
+        """
+        Add true uncertainties estimation with temporary PSF chi-square filtering.
+
+        :param temp_x2_max_value: Chi-square value used to pre-filter egregious outliers.
+        """
         cut = Cut(
             "True Uncertainties Estimation",
             description=f"We attempt to account for an extra noise source in the data by estimating the true typical uncertainty, deriving the additional systematic uncertainty, and applying this extra noise to the uncertainty column. We also use a temporary, very high PSF chi-square cut value of {temp_x2_max_value} to eliminate the most egregious outliers from the data before estimating the true uncertainties.",
@@ -838,6 +1226,12 @@ class CutHistory:
         self.add(cut)
 
     def add_ChiSquareCut(self, flag: int = 0x1, max_value: float = 10):
+        """
+        Add a cut for high PSF chi-square values.
+
+        :param flag: Bitmask flag value.
+        :param max_value: Maximum acceptable chi-square value.
+        """
         flag = PrimaryFlag(
             "high_psf_chi_square",
             flag,
@@ -859,13 +1253,26 @@ class CutHistory:
         Ngood_min: int = 4,
         Ngood_flag: int = 0x800,
     ):
+        """
+        Add a cut based on control light curve statistics.
+
+        :param flag: Primary flag for bad epochs.
+        :param questionable_flag: Flag for questionable epochs.
+        :param x2_max: Maximum chi-square threshold of the sigma-clipped epoch.
+        :param x2_flag: Flag for high chi-square.
+        :param snr_max: Maximum SNR threshold of the sigma-clipped epoch.
+        :param snr_flag: Flag for high SNR.
+        :param Nclip_max: Maximum number of clipped measurements.
+        :param Nclip_flag: Flag for too many clipped measurements in the epoch.
+        :param Ngood_min: Minimum required good measurements.
+        :param Ngood_flag: Flag for too few good measurements in the epoch.
+        """
         primary_flag = PrimaryFlag(
             "bad_epoch",
             flag,
             description="control flux corresponding to this epoch is inconsistent with 0",
         )
 
-        # TODO
         secondary_flags = [
             Flag(
                 "high_control_x2",
@@ -913,6 +1320,17 @@ class CutHistory:
         large_num_clipped_flag: int = 0x1000,
         small_num_unmasked_flag: int = 0x2000,
     ):
+        """
+        Add a cut for identifying bad days using binning and statistics.
+
+        :param flag: Primary flag for bad days.
+        :param mjd_bin_size: Bin size in days.
+        :param x2_max: Chi-square threshold of the sigma-clipped bin.
+        :param Nclip_max: Max number of clipped values.
+        :param Ngood_min: Min number of good values.
+        :param large_num_clipped_flag: Flag for excessive clipping.
+        :param small_num_unmasked_flag: Flag for insufficient unmasked measurements.
+        """
         primary_flag = PrimaryFlag(
             "bad_day",
             flag,

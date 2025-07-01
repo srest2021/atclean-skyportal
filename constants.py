@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+# column names for table containing coordinates info about SN and control light curves
 CTRL_COORDINATES_TABLE_COLNAMES = [
     "tnsname",
     "control_index",
@@ -13,6 +14,7 @@ CTRL_COORDINATES_TABLE_COLNAMES = [
     "n_detec_o",
 ]
 
+# column names for table containing contamination and loss for a range of possible chi-square cuts
 CHISQUARECUTS_TABLE_COLNAMES = [
     "PSF Chi-Square Cut",
     "N",
@@ -33,6 +35,7 @@ CHISQUARECUTS_TABLE_COLNAMES = [
     "Pcontamination",
 ]
 
+# column names for raw light curve returned from ATLAS API
 ATLAS_API_COLNAMES = [
     "MJD",
     "m",
