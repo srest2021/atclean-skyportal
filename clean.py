@@ -25,17 +25,27 @@ class ChiSquareCutsTable:
     """
 
     def __init__(self, lc: LightCurve, snr_bound: Optional[float] = 3, indices=None):
+        """
+        Initialize the ChiSquareCutsTable object.
+
+        :param lc: The LightCurve instance to analyze.
+        :param snr_bound: SNR threshold for separating good vs. bad data (default: 3).
+        :param indices: Optional subset of indices to consider (default: all).
+        """
         self.logger = CustomLogger(self.__class__.__name__)
         self.t = None
 
         self.lc = lc
-        if indices is None:
-            indices = self.lc.getindices()
-        self.indices = indices
-
+        self.indices = self.lc.getindices(indices)
         self.good_ix, self.bad_ix = self.get_goodbad_indices(snr_bound=snr_bound)
 
     def get_goodbad_indices(self, snr_bound: Optional[float] = 3):
+        """
+        Get indices of good and bad data based on SNR threshold.
+
+        :param snr_bound: SNR threshold separating good vs. bad data.
+        :return: Tuple (good_ix, bad_ix)
+        """
         if not self.lc.colnames.snr in self.lc.t.columns:
             self.lc.calculate_snr_col()
 
@@ -49,6 +59,12 @@ class ChiSquareCutsTable:
         return good_ix, bad_ix
 
     def get_keptcut_indices(self, x2_max: float):
+        """
+        Determine which measurements are kept or cut by a chi-square threshold.
+
+        :param x2_max: Chi-square threshold.
+        :return: Tuple (kept_ix, cut_ix)
+        """
         kept_ix = self.lc.ix_inrange(
             colnames=self.lc.colnames.chisquare, uplim=x2_max, indices=self.indices
         )
@@ -61,6 +77,14 @@ class ChiSquareCutsTable:
         kept_ix: Optional[List[int]] = None,
         cut_ix: Optional[List[int]] = None,
     ):
+        """
+        Compute statistics (e.g., contamination and loss) for a single chi-square cut.
+
+        :param x2_max: Chi-square threshold.
+        :param kept_ix: Optional list of indices kept by the cut. Otherwise, will be calculated.
+        :param cut_ix: Optional list of indices cut by the cut. Otherwise, will be calculated.
+        :return: Dictionary with computed statistics.
+        """
         if kept_ix is None or cut_ix is None:
             kept_ix, cut_ix = self.get_keptcut_indices(x2_max)
         data = {
@@ -92,6 +116,14 @@ class ChiSquareCutsTable:
         kept_ix: Optional[List[int]] = None,
         cut_ix: Optional[List[int]] = None,
     ):
+        """
+        Compute contamination and loss percentages for a single chi-square cut.
+
+        :param x2_max: Chi-square threshold.
+        :param kept_ix: Optional list of indices kept by the cut. Otherwise, will be calculated.
+        :param cut_ix: Optional list of indices cut by the cut. Otherwise, will be calculated.
+        :return: Tuple (contamination_percent, loss_percent)
+        """
         if kept_ix is None or cut_ix is None:
             kept_ix, cut_ix = self.get_keptcut_indices(x2_max)
 
@@ -105,6 +137,13 @@ class ChiSquareCutsTable:
         stop: Optional[float] = 50,
         step: Optional[float] = 1,
     ):
+        """
+        Generate a table of cut statistics (e.g., contamination and loss) over a range of chi-square thresholds.
+
+        :param start: Starting value of possible range of chi-square cuts (default: 3).
+        :param stop: Final value of possible range of chi-square cuts (default: 50).
+        :param step: Step size between cuts (default: 1).
+        """
         self.logger.info(
             f"Calculating loss and contamination for chi-square cuts from {start} to {stop}"
         )
@@ -124,7 +163,7 @@ class ChiSquareCutsTable:
 
 
 class LightCurveCleaner:
-    """Utility class for cleaning ATLAS light curvess"""
+    """Utility class for cleaning ATLAS light curves"""
 
     def __init__(self, verbose: bool = False):
         self.logger = CustomLogger(verbose=verbose)
