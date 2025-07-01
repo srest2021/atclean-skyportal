@@ -21,6 +21,16 @@ from pathlib import Path
 
 from pdastro import AnotB, not_AandB
 
+C4_SMALL_N = [
+    0.0,
+    0.0,
+    0.7978845608028654,
+    0.8862269254527579,
+    0.9213177319235613,
+    0.9399856029866251,
+    0.9515328619481445,
+]
+
 
 class CustomLogger:
     def __init__(self, verbose: bool = False):
@@ -300,66 +310,64 @@ class BinnedColumnNames(ColumnNames):
 
 class StatParams:
     def __init__(self, d: Optional[Dict[str, int | float | List[int] | None]] = None):
-        if d:
+        self.FIELDS = [
+            "mean",
+            "mean_err",
+            "stdev",
+            "stdev_err",
+            "X2norm",
+            "Nclip",
+            "Ngood",
+            "Nchanged",
+            "Nmask",
+            "Nnan",
+            "ix_good",
+            "ix_clip",
+        ]
+
+        if d is not None:
             self.from_dict(d)
         else:
-            self.mean: Optional[float] = None
-            self.mean_err: Optional[float] = None
-            self.stdev: Optional[float] = None
-            self.stdev_err: Optional[float] = None
-            self.X2norm: Optional[float] = None
-            self.Nclip: Optional[int] = None
-            self.Ngood: Optional[int] = None
-            self.Nchanged: Optional[int] = None
-            self.Nmask: Optional[int] = None
-            self.Nnan: Optional[int] = None
-            self.ix_good: Optional[List[int]] = None
-            self.ix_clip: Optional[List[int]] = None
+            self.from_dict({})
 
     def from_dict(self, d: Dict[str, int | float | None]):
-        self.mean = d.get("mean")
-        self.mean_err = d.get("mean_err")
-        self.stdev = d.get("stdev")
-        self.stdev_err = d.get("stdev_err")
-        self.X2norm = d.get("X2norm")
-        self.Nclip = d.get("Nclip")
-        self.Ngood = d.get("Ngood")
-        self.Nchanged = d.get("Nchanged")
-        self.Nmask = d.get("Nmask")
-        self.Nnan = d.get("Nnan")
-        self.ix_good = d.get("ix_good")
-        self.ix_clip = d.get("ix_clip")
+        for key in self.FIELDS:
+            setattr(self, key, d.get(key))
 
-    def update_iteration(
-        self,
-        mean: Optional[float] = None,
-        mean_err: Optional[float] = None,
-        stdev: Optional[float] = None,
-        stdev_err: Optional[float] = None,
-        X2norm: Optional[float] = None,
-        Ngood: Optional[int] = None,
-        Nclip: Optional[int] = None,
-        Nchanged: Optional[int] = None,
-        Nmask: Optional[int] = None,
-        Nnan: Optional[int] = None,
-        ix_good: Optional[List[int]] = None,
-        ix_clip: Optional[List[int]] = None,
-    ):
-        self.mean = mean
-        self.mean_err = mean_err
-        self.stdev = stdev
-        self.stdev_err = stdev_err
-        self.X2norm = X2norm
-        self.Nclip = Nclip
-        self.Ngood = Ngood
-        self.Nchanged = Nchanged
-        self.Nmask = Nmask
-        self.Nnan = Nnan
-        self.ix_good = ix_good
-        self.ix_clip = ix_clip
+    def update(self, **kwargs):
+        for key in self.FIELDS:
+            val = kwargs.get(key, None)
+            if val is not None:
+                setattr(self, key, val)
 
     def reset(self):
-        self.update_iteration()
+        for key in self.FIELDS:
+            setattr(self, key, None)
+
+    def get_row(self, prefix="", skip=None) -> Dict[str, float]:
+        skip = set(skip or [])
+        row = {}
+
+        for name in self.FIELDS:
+            if name not in skip:
+                colname = prefix + name
+                try:
+                    row[colname] = getattr(self, name, np.nan)
+                except Exception:
+                    # Fallback in case something goes wrong (e.g., corrupted attribute)
+                    row[colname] = np.nan
+
+        return row
+
+    def __str__(self):
+        parts = []
+        for key in self.FIELDS:
+            val = getattr(self, key, None)
+            if isinstance(val, float):
+                parts.append(f"{key}={val:.17g}")  # Full float precision
+            else:
+                parts.append(f"{key}={val}")
+        return f"StatParams({', '.join(parts)})"
 
 
 class SigmaClipper:
@@ -370,21 +378,11 @@ class SigmaClipper:
         self.converged = False
         self.i = 0
 
-        self.c4_smalln = [
-            0.0,
-            0.0,
-            0.7978845608028654,
-            0.8862269254527579,
-            0.9213177319235613,
-            0.9399856029866251,
-            0.9515328619481445,
-        ]
-
     @staticmethod
-    def c4(self, n) -> float:
+    def c4(n) -> float:
         """http://en.wikipedia.org/wiki/Unbiased_estimation_of_standard_deviation"""
         if n <= 6:
-            return self.c4_smalln[n]
+            return C4_SMALL_N[n]
         else:
             return (
                 1.0
@@ -484,7 +482,7 @@ class SigmaClipper:
                 mean = np.median(x_good)
                 stdev = np.sqrt(
                     np.sum((x_good - mean) ** 2.0) / (Ngood - 1.0)
-                ) / self.c4(Ngood)
+                ) / SigmaClipper.c4(Ngood)
                 mean_err = np.median(dx_good) / np.sqrt(Ngood - 1)
             else:
                 w = 1.0 / (dx_good**2.0)
@@ -501,17 +499,19 @@ class SigmaClipper:
         else:
             mean = mean_err = stdev = stdev_err = X2norm = None
 
-        self.statparams.update_iteration(
-            mean,
-            mean_err,
-            stdev,
-            stdev_err,
-            X2norm,
-            Ngood,
-            good_ix,
-            len(indices) - Ngood,
-            AnotB(indices, good_ix),
-            len(not_AandB(good_ix_bkp, good_ix)) if good_ix_bkp is not None else 0,
+        self.statparams.update(
+            mean=mean,
+            mean_err=mean_err,
+            stdev=stdev,
+            stdev_err=stdev_err,
+            X2norm=X2norm,
+            Ngood=Ngood,
+            ix_good=good_ix,
+            Nclip=len(indices) - Ngood,
+            ix_clip=AnotB(indices, good_ix),
+            Nchanged=(
+                len(not_AandB(good_ix_bkp, good_ix)) if good_ix_bkp is not None else 0
+            ),
         )
 
         return int(Ngood < 1)
@@ -562,9 +562,9 @@ class SigmaClipper:
         if Ngood > 1:
             if median_flag:
                 mean = np.median(x_good)
-                stdev = np.sqrt(np.sum((x_good - mean) ** 2) / (Ngood - 1.0)) / self.c4(
-                    Ngood
-                )
+                stdev = np.sqrt(
+                    np.sum((x_good - mean) ** 2) / (Ngood - 1.0)
+                ) / SigmaClipper.c4(Ngood)
             else:
                 mean = np.mean(x_good)
                 stdev = np.std(x_good, ddof=1)
@@ -583,17 +583,19 @@ class SigmaClipper:
         else:
             mean = mean_err = stdev = stdev_err = X2norm = None
 
-        self.statparams.update_iteration(
-            mean,
-            mean_err,
-            stdev,
-            stdev_err,
-            X2norm,
-            Ngood,
-            good_ix,
-            len(indices) - Ngood,
-            AnotB(indices, good_ix),
-            len(not_AandB(good_ix_bkp, good_ix)) if good_ix_bkp is not None else 0,
+        self.statparams.update(
+            mean=mean,
+            mean_err=mean_err,
+            stdev=stdev,
+            stdev_err=stdev_err,
+            X2norm=X2norm,
+            Ngood=Ngood,
+            ix_good=good_ix,
+            Nclip=len(indices) - Ngood,
+            ix_clip=AnotB(indices, good_ix),
+            Nchanged=(
+                len(not_AandB(good_ix_bkp, good_ix)) if good_ix_bkp is not None else 0
+            ),
         )
 
         return int(Ngood < 1)

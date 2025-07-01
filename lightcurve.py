@@ -432,7 +432,7 @@ class BaseLightCurve(pdastrostatsclass):
         )
 
     def _get_average_flux(self, indices=None) -> StatParams:
-        sigma_clipper = SigmaClipper(verbose=self.logger.verbose)
+        sigma_clipper = SigmaClipper(verbose=False)
         sigma_clipper.calcaverage_sigmacutloop(
             self.t[self.colnames.flux].values,
             noise_arr=self.t[self.colnames.dflux].values,
@@ -443,340 +443,14 @@ class BaseLightCurve(pdastrostatsclass):
         return sigma_clipper.statparams
 
     def _get_average_mjd(self, indices=None) -> float:
-        sigma_clipper = SigmaClipper(verbose=self.logger.verbose)
+        sigma_clipper = SigmaClipper(verbose=False)
         sigma_clipper.calcaverage_sigmacutloop(
             self.t[self.default_mjd_colname].values,
             indices=indices,
             Nsigma=0,
             median_firstiteration=False,
         )
-        return sigma_clipper.statparams
-
-    """
-    def calcaverage_errorcut_np(
-        self,
-        data,
-        noise,
-        indices=None,
-        mean=None,
-        Nsigma=None,
-        median_flag=False,
-    ):
-        ix = np.asarray(self.getindices(indices))
-        x = data[ix]
-        dx = noise[ix]
-
-        if Nsigma is not None and mean is not None:
-            diff = np.abs(x - mean)
-            good_ix = ix[diff <= Nsigma * dx]
-            good_ix_bkp = deepcopy(self.statparams["ix_good"])
-        else:
-            good_ix = ix
-            good_ix_bkp = None
-
-        Ngood = len(good_ix)
-
-        if Ngood > 1:
-            x_good = data[good_ix]
-            dx_good = noise[good_ix]
-            if median_flag:
-                mean = np.median(x_good)
-                stdev = np.sqrt(
-                    np.sum((x_good - mean) ** 2.0) / (Ngood - 1.0)
-                ) / self.c4(Ngood)
-                mean_err = np.median(dx_good) / np.sqrt(Ngood - 1)
-            else:
-                w = 1.0 / (dx_good**2.0)
-                mean = np.sum(x_good * w) / np.sum(w)
-                mean_err = np.sqrt(1.0 / np.sum(w))
-                stdev = np.std(x_good, ddof=1)
-
-            stdev_err = stdev / np.sqrt(2.0 * Ngood)
-            X2norm = np.sum(((x_good - mean) / dx_good) ** 2.0) / (Ngood - 1.0)
-        elif Ngood == 1:
-            mean = data[good_ix[0]]
-            mean_err = noise[good_ix[0]]
-            stdev = stdev_err = X2norm = None
-        else:
-            mean = mean_err = stdev = stdev_err = X2norm = None
-
-        self.statparams.update(
-            {
-                "ix_good": good_ix,
-                "Ngood": Ngood,
-                "ix_clip": AnotB(ix, good_ix),
-                "Nclip": len(ix) - Ngood,
-                "mean": mean,
-                "stdev": stdev,
-                "mean_err": mean_err,
-                "stdev_err": stdev_err,
-                "X2norm": X2norm,
-                "Nchanged": (
-                    len(not_AandB(good_ix_bkp, good_ix))
-                    if good_ix_bkp is not None
-                    else 0
-                ),
-            }
-        )
-
-        return int(Ngood < 1)
-
-    def calcaverage_sigmacut_np(
-        self,
-        data,
-        noise=None,
-        indices=None,
-        mean=None,
-        stdev=None,
-        Nsigma=None,
-        percentile_cut=None,
-        percentile_Nmin=3,
-        median_flag=False,
-    ):
-        indices = self.getindices(indices)
-        if len(indices) == 0:
-            self.reset()
-            self.logger.warning("No data passed for sigma cut")
-            return 2
-
-        x = data[indices]
-        ix = np.asarray(indices)
-
-        good_ix_bkp = None
-        if percentile_cut is None or len(ix) <= percentile_Nmin:
-            # if N-sigma cut and second iteration (i.e. we have a stdev from the first iteration), skip bad measurements
-            if Nsigma is not None and stdev is not None and mean is not None:
-                good_ix_bkp = deepcopy(self.statparams["ix_good"])
-                good_ix = ix[np.abs(x - mean) <= Nsigma * stdev]
-            else:
-                good_ix = ix
-        else:  # percentile clipping
-            if mean is None:
-                mean = np.median(x) if median_flag else np.mean(x)
-            residuals = np.abs(x - mean)
-            max_residual = np.percentile(residuals, percentile_cut)
-            good_ix = ix[residuals < max_residual]
-
-            if len(good_ix) < percentile_Nmin:
-                sorted_residuals = np.sort(residuals)
-                max_residual = sorted_residuals[percentile_Nmin - 1]
-                good_ix = ix[residuals < max_residual]
-
-        Ngood = len(good_ix)
-        x_good = data[good_ix]
-
-        if Ngood > 1:
-            if median_flag:
-                mean = np.median(x_good)
-                stdev = np.sqrt(np.sum((x_good - mean) ** 2) / (Ngood - 1.0)) / self.c4(
-                    Ngood
-                )
-            else:
-                mean = np.mean(x_good)
-                stdev = np.std(x_good, ddof=1)
-
-            mean_err = stdev / np.sqrt(Ngood - 1.0)
-            stdev_err = stdev / np.sqrt(2.0 * Ngood)
-            if noise is None:
-                X2norm = np.sum(((x_good - mean) / stdev) ** 2) / (Ngood - 1.0)
-            else:
-                dx_good = noise[good_ix]
-                X2norm = np.sum(((x_good - mean) / dx_good) ** 2) / (Ngood - 1.0)
-        elif Ngood == 1:
-            mean = x_good[0]
-            mean_err = noise[good_ix[0]] if noise is not None else None
-            stdev = stdev_err = X2norm = None
-        else:
-            mean = mean_err = stdev = stdev_err = X2norm = None
-
-        self.statparams.update(
-            {
-                "ix_good": good_ix,
-                "Ngood": Ngood,
-                "ix_clip": AnotB(ix, good_ix),
-                "Nclip": len(ix) - Ngood,
-                "mean": mean,
-                "stdev": stdev,
-                "mean_err": mean_err,
-                "stdev_err": stdev_err,
-                "X2norm": X2norm,
-                "Nchanged": (
-                    len(not_AandB(good_ix_bkp, good_ix))
-                    if good_ix_bkp is not None
-                    else 0
-                ),
-            }
-        )
-
-        return int(Ngood < 1)
-
-    def ix_inrange_np(
-        self,
-        colnames=None,
-        lowlim=None,
-        uplim=None,
-        indices=None,
-        exclude_lowlim=False,
-        exclude_uplim=False,
-    ) -> List[int]:
-        indices = np.asarray(self.getindices(indices))
-        colnames = self.getcolnames(colnames)
-
-        keep_mask = np.ones(len(indices), dtype=bool)
-
-        for colname in colnames:
-            values = self.t[colname].values[indices]
-
-            if lowlim is not None:
-                if exclude_lowlim:
-                    keep_mask &= values > lowlim
-                else:
-                    keep_mask &= values >= lowlim
-
-            if uplim is not None:
-                if exclude_uplim:
-                    keep_mask &= values < uplim
-                else:
-                    keep_mask &= values <= uplim
-
-        return indices[keep_mask]
-
-    def ix_unmasked_np(self, mask_arr, maskval=None, indices=None):
-        if indices is None:
-            indices = np.arange(len(mask_arr))
-
-        sub_mask = mask_arr[indices]
-
-        if maskval is None:
-            keep = sub_mask == 0
-        else:
-            keep = bitmask.bitfield_to_boolean_mask(
-                sub_mask.astype(int),
-                ignore_flags=~maskval,
-                good_mask_value=True,
-            )
-
-        return indices[keep]
-
-    def ix_not_null_np(self, arrays: List, indices=None):
-        if indices is None:
-            if len(arrays) == 0:
-                return np.array([], dtype=int)
-            indices = np.arange(len(arrays[0]))
-        else:
-            indices = np.asarray(indices)
-
-        keep_mask = np.ones(len(indices), dtype=bool)
-        for arr in arrays:
-            keep_mask &= pd.notnull(arr[indices])
-
-        return indices[keep_mask]
-
-    def calcaverage_sigmacutloop_np(
-        self,
-        data_arr,
-        indices=None,
-        noise_arr=None,
-        sigmacut_flag=False,
-        mask_arr=None,
-        maskval=None,
-        removeNaNs=True,
-        Nsigma=3.0,
-        Nitmax=10,
-        verbose=0,
-        percentile_cut_firstiteration=None,
-        median_firstiteration=True,
-    ):
-        if noise_arr is None:
-            sigmacut_flag = True
-        indices = np.asarray(self.getindices(indices))
-        self.reset()
-
-        # exclude data if wanted
-        if mask_arr is not None:
-            Ntot = len(indices)
-            indices = self.ix_unmasked_np(mask_arr, maskval=maskval, indices=indices)
-            self.statparams["Nmask"] = Ntot - len(indices)
-            if verbose > 1:
-                print(
-                    f"Keeping {len(indices)} out of {Ntot}, skipping {Ntot - len(indices)} because of masking (maskval={maskval})"
-                )
-        else:
-            self.statparams["Nmask"] = 0
-
-        # remove null values if wanted
-        if removeNaNs:
-            arrays = [data_arr]
-            if noise_arr is not None:
-                arrays.append(noise_arr)
-            if mask_arr is not None:
-                arrays.append(mask_arr)
-
-            Ntot = len(indices)
-            indices = self.ix_not_null_np(arrays, indices=indices)
-            self.statparams["Nnan"] = Ntot - len(indices)
-            if verbose > 1:
-                print(
-                    f"NaN filtering: kept {len(indices)} / {Ntot}, removed {Ntot - len(indices)}"
-                )
-        else:
-            self.statparams["Nnan"] = 0
-
-        for i in range(Nitmax):
-            if self.statparams["converged"]:
-                break
-
-            self.statparams["i"] = i
-            medianflag = median_firstiteration and (i == 0) and (Nsigma is not None)
-            percentile_cut = percentile_cut_firstiteration if i == 0 else None
-
-            if sigmacut_flag:
-                errorflag = self.calcaverage_sigmacut_np(
-                    data=data_arr,
-                    noise=noise_arr,
-                    indices=indices,
-                    mean=self.statparams.get("mean"),
-                    stdev=self.statparams.get("stdev"),
-                    Nsigma=Nsigma,
-                    median_flag=medianflag,
-                    percentile_cut=percentile_cut,
-                )
-            else:
-                errorflag = self.calcaverage_errorcut_np(
-                    data=data_arr,
-                    noise=noise_arr,
-                    indices=indices,
-                    mean=self.statparams.get("mean"),
-                    Nsigma=Nsigma,
-                    median_flag=medianflag,
-                )
-
-            if verbose > 2:
-                print(self.statstring())
-
-            if (
-                errorflag
-                or self.statparams["stdev"] is None
-                or (self.statparams["stdev"] == 0.0 and sigmacut_flag)
-                or self.statparams["mean"] is None
-            ):
-                self.statparams["converged"] = False
-                break
-
-            if Nsigma in (None, 0.0):
-                self.statparams["converged"] = True
-                break
-
-            if i > 0 and self.statparams["Nchanged"] == 0 and not medianflag:
-                self.statparams["converged"] = True
-                break
-
-        if not (self.statparams["converged"]):
-            if self.verbose > 1:
-                print("WARNING: No convergence")
-
-        return not self.statparams["converged"]
-    """
+        return sigma_clipper.statparams.mean
 
     def merge(self, other: Self) -> Self:
         """
@@ -993,8 +667,23 @@ class LightCurve(BaseLightCurve):
         # recalculate SNR
         self.calculate_snr_col()
 
-    def add_statparams_to_table(self, index: int, statparams: StatParams):
-        pass
+    def update_statparams(
+        self,
+        statparams: StatParams,
+        index: Optional[int] = None,
+        prefix="controls_",
+    ):
+        row = statparams.get_row(prefix=prefix, skip=["ix_good", "ix_clip"])
+
+        # add missing columns
+        for col in row:
+            if col not in self.t.columns:
+                self.t[col] = np.nan
+
+        if index is None:
+            index = len(self.t) - 1
+        for col, val in row.items():
+            self.t.at[index, col] = val
 
     def flag_by_control_stats(
         self,
@@ -1008,6 +697,7 @@ class LightCurve(BaseLightCurve):
         Nclip_flag: int = 0x400,
         Ngood_min: int = 4,
         Ngood_flag: int = 0x800,
+        prefix="controls_",
     ):
         """
         Flag light curve measurements based on control statistics.
@@ -1040,16 +730,16 @@ class LightCurve(BaseLightCurve):
         """
         # flag SN measurements according to given bounds
         flag_x2_ix = self.ix_inrange(
-            colnames=["c2_X2norm"], lowlim=x2_max, exclude_lowlim=True
+            colnames=[f"{prefix}X2norm"], lowlim=x2_max, exclude_lowlim=True
         )
         flag_stn_ix = self.ix_inrange(
-            colnames=["c2_abs_stn"], lowlim=snr_max, exclude_lowlim=True
+            colnames=[f"{prefix}abs_stn"], lowlim=snr_max, exclude_lowlim=True
         )
         flag_nclip_ix = self.ix_inrange(
-            colnames=["c2_Nclip"], lowlim=Nclip_max, exclude_lowlim=True
+            colnames=[f"{prefix}Nclip"], lowlim=Nclip_max, exclude_lowlim=True
         )
         flag_ngood_ix = self.ix_inrange(
-            colnames=["c2_Ngood"], uplim=Ngood_min, exclude_uplim=True
+            colnames=[f"{prefix}Ngood"], uplim=Ngood_min, exclude_uplim=True
         )
         self.update_mask_column(x2_flag, flag_x2_ix)
         self.update_mask_column(snr_flag, flag_stn_ix)
@@ -1057,7 +747,7 @@ class LightCurve(BaseLightCurve):
         self.update_mask_column(Ngood_flag, flag_ngood_ix)
 
         # update mask column with control light curve cut on any measurements flagged according to given bounds
-        zero_Nclip_ix = self.ix_equal("c2_Nclip", 0)
+        zero_Nclip_ix = self.ix_equal(f"{prefix}Nclip", 0)
         unmasked_ix = self.ix_unmasked(
             self.colnames.mask,
             maskval=x2_flag | snr_flag | Nclip_flag | Ngood_flag,
@@ -1270,6 +960,11 @@ class BinnedLightCurve(BaseLightCurve):
         cols_dict = super()._get_postprocess_cols_dict()
         cols_dict[self.colnames.mjdbin] = "mjd_bin"
         return cols_dict
+
+    def get_percent_flagged(self, flag: Optional[int] = None) -> float:
+        non_null_ix = self.ix_not_null(self.colnames.mjd)
+        bad_ix = self.ix_masked(self.colnames.mask, maskval=flag, indices=non_null_ix)
+        return len(bad_ix) / len(non_null_ix)
 
 
 class BaseTransient:
@@ -1546,7 +1241,7 @@ class Transient(BaseTransient):
         for i in self.lc_indices:
             self.get(i).add_noise_to_dflux(sigma_extra)
 
-    def calculate_control_stats(self, previous_flags: int):
+    def calculate_control_stats(self, previous_flags: int, prefix="controls_"):
         self.logger.info("Calculating control light curve statistics")
 
         len_mjd = len(self.get_sn().t[self.default_mjd_colname])
@@ -1572,11 +1267,7 @@ class Transient(BaseTransient):
 
             i += 1
 
-        # c2_param2columnmapping = self.get_sn().intializecols4statparams(
-        #     prefix="c2_", format4outvals="{:.2f}", skipparams=["converged", "i"]
-        # )
-        sigma_clipper = SigmaClipper(verbose=self.logger.verbose)
-
+        sigma_clipper = SigmaClipper(verbose=False)
         for index in range(uJy.shape[-1]):
             sigma_clipper.calcaverage_sigmacutloop(
                 uJy[0:, index],
@@ -1586,31 +1277,12 @@ class Transient(BaseTransient):
                 Nsigma=3.0,
                 median_firstiteration=True,
             )
+            self.get_sn().update_statparams(
+                sigma_clipper.statparams, index=index, prefix=prefix
+            )
 
-            self.get_sn().add_statparams_to_table(index, sigma_clipper.statparams)
-
-            # pda4MJD = pdastrostatsclass()
-            # pda4MJD.t[self.colnames.flux] = uJy[0:, index]
-            # pda4MJD.t[self.colnames.dflux] = duJy[0:, index]
-            # pda4MJD.t[self.colnames.mask] = np.bitwise_and(
-            #     Mask[0:, index], previous_flags
-            # )
-
-            # pda4MJD.calcaverage_sigmacutloop(
-            #     self.colnames.flux,
-            #     noisecol=self.colnames.dflux,
-            #     maskcol=self.colnames.mask,
-            #     maskval=previous_flags,
-            #     verbose=1,
-            #     Nsigma=3.0,
-            #     median_firstiteration=True,
-            # )
-            # self.get_sn().statresults2table(
-            #     pda4MJD.statparams, c2_param2columnmapping, destindex=index
-            # )
-
-        self.get_sn().t["c2_abs_stn"] = (
-            self.get_sn().t["c2_mean"] / self.get_sn().t["c2_mean_err"]
+        self.get_sn().t[f"{prefix}abs_stn"] = (
+            self.get_sn().t[f"{prefix}mean"] / self.get_sn().t[f"{prefix}mean_err"]
         )
         self.logger.success()
 

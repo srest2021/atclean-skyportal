@@ -290,7 +290,7 @@ class LightCurveCleaner:
         )
         stats_table.calculate_table(
             start=table_start,
-            stop=max(max_value, table_stop),
+            stop=table_stop,
             step=table_step,
         )
 
