@@ -314,7 +314,7 @@ class ColumnNames:
         Add a single column name mapping.
 
         :param key: Internal key name.
-        :param name: Actual column name used in the dataframe.
+        :param name: Actual column name used in the DataFrame.
         :param is_required: Whether the column is required.
         :param overwrite: Whether to allow overwriting an existing mapping.
         :raises ValueError: If the key or name is invalid.
@@ -1325,9 +1325,9 @@ class CutHistory:
 
         :param flag: Primary flag for bad days.
         :param mjd_bin_size: Bin size in days.
-        :param x2_max: Chi-square threshold of the sigma-clipped bin.
-        :param Nclip_max: Max number of clipped values.
-        :param Ngood_min: Min number of good values.
+        :param x2_max: Maximum chi-square allowed for a good bin.
+        :param Nclip_max: Maximum allowed clipped points in a bin.
+        :param Ngood_min: Minimum number of good points required in a bin.
         :param large_num_clipped_flag: Flag for excessive clipping.
         :param small_num_unmasked_flag: Flag for insufficient unmasked measurements.
         """
