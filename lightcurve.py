@@ -385,6 +385,15 @@ class BaseLightCurve(pdastrostatsclass):
         )
         return sigma_clipper.statparams.mean
 
+    def new(self, filt: str | None):
+        return self.__class__(
+            self.control_index,
+            self.coords,
+            self.colnames,
+            filt=filt,
+            verbose=self.logger.verbose,
+        )
+
     def merge(self, other: Self) -> Self:
         """
         Merge this LightCurve with another one and return a new LightCurve instance
@@ -408,8 +417,12 @@ class BaseLightCurve(pdastrostatsclass):
             merged_filt = None
 
         # combine tables
-        merged_t = pd.concat(
-            [self.t or pd.DataFrame(), other.t or pd.DataFrame()], ignore_index=True
+        merged_t: pd.DataFrame = pd.concat(
+            [
+                pd.DataFrame() if self.t.empty else self.t,
+                pd.DataFrame() if other.t.empty else other.t,
+            ],
+            ignore_index=True,
         )
         if not merged_t.empty:
             merged_t.sort_values(
@@ -417,13 +430,7 @@ class BaseLightCurve(pdastrostatsclass):
             )
 
         # create new lc
-        new_lc = self.__class__(
-            self.control_index,
-            self.coords,
-            self.colnames,
-            filt=merged_filt,
-            verbose=self.logger.verbose,
-        )
+        new_lc = self.new(merged_filt)
         new_lc.t = deepcopy(merged_t)  # skip preprocessing
         return new_lc
 
@@ -487,6 +494,14 @@ class LightCurve(BaseLightCurve):
         """
         super().__init__(
             control_index, coords, CleanedColumnNames(), filt=filt, verbose=verbose
+        )
+
+    def new(self, filt: str | None):
+        return LightCurve(
+            self.control_index,
+            self.coords,
+            filt=filt,
+            verbose=self.logger.verbose,
         )
 
     def preprocess(self, flux2mag_sigmalimit=3.0):
@@ -892,6 +907,15 @@ class BinnedLightCurve(BaseLightCurve):
         )
         self.mjd_bin_size = mjd_bin_size
 
+    def new(self, filt: str | None):
+        return BinnedLightCurve(
+            self.control_index,
+            self.coords,
+            self.mjd_bin_size,
+            filt=filt,
+            verbose=self.logger.verbose,
+        )
+
     @property
     def default_mjd_colname(self):
         """
@@ -1100,6 +1124,12 @@ class BaseTransient:
         )
         return all_controls
 
+    def new(self, filt: str | None):
+        return self.__class__(
+            filt=filt,
+            verbose=self.logger.verbose,
+        )
+
     def merge(self, other: Self) -> Self:
         """
         Merge this BaseTransient instance with another, combining their contained light curves.
@@ -1118,15 +1148,17 @@ class BaseTransient:
         if self.filt is None or other.filt is None or self.filt != other.filt:
             merged_filt = None
 
-        new_transient = self.__class__(filt=merged_filt, verbose=self.logger.verbose)
+        new_transient = self.new(merged_filt)
         all_indices = set(self.lcs.keys()).union(set(other.lcs.keys()))
 
         for i in all_indices:
             if i in self.lcs and i in other.lcs:
                 new_transient.add(self.get(i).merge(other.get(i)))
             elif i in self.lcs:
+                self.get(i).filt = None
                 new_transient.add(self.get(i))
             else:
+                other.get(i).filt = None
                 new_transient.add(other.get(i))
 
         return new_transient
@@ -1490,5 +1522,16 @@ class BinnedTransient(BaseTransient):
     def get(self, control_index: int) -> BinnedLightCurve:
         return super().get(control_index)
 
-    def add(self, lc: BinnedLightCurve, deep: bool = False):
-        return super().add(lc, deep=deep)
+    def new(self, filt: Optional[str] = None):
+        return BinnedTransient(
+            self.mjd_bin_size,
+            filt=self.filt if filt is None else filt,
+            verbose=self.logger.verbose,
+        )
+
+    def merge(self, other: Self) -> Self:
+        if self.mjd_bin_size != other.mjd_bin_size:
+            raise ValueError(
+                f"Can only merge with a BinnedTransient instance of the same MJD bin size (self: {self.mjd_bin_size:0.2f} days; other: {other.mjd_bin_size:0.2f} days)"
+            )
+        return super().merge(other)
