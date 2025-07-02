@@ -2,7 +2,7 @@
 
 # column names for table containing coordinates info about SN and control light curves
 CTRL_COORDINATES_TABLE_COLNAMES = [
-    "tnsname",
+    "transient_name",
     "control_index",
     "ra",
     "dec",

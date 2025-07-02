@@ -24,15 +24,22 @@ class ChiSquareCutsTable:
     - Contamination = Number of bad kept measurements / Number of bad measurements
     """
 
-    def __init__(self, lc: LightCurve, snr_bound: Optional[float] = 3, indices=None):
+    def __init__(
+        self,
+        lc: LightCurve,
+        snr_bound: Optional[float] = 3,
+        indices=None,
+        verbose: bool = False,
+    ):
         """
         Initialize the ChiSquareCutsTable object.
 
         :param lc: The LightCurve instance to analyze.
         :param snr_bound: SNR threshold for separating good vs. bad data (default: 3).
         :param indices: Optional subset of indices to consider (default: all).
+        :param verbose: Enable verbose logging.
         """
-        self.logger = CustomLogger(self.__class__.__name__)
+        self.logger = CustomLogger(verbose=verbose)
         self.t = None
 
         self.lc = lc
@@ -161,6 +168,9 @@ class ChiSquareCutsTable:
 
         self.logger.success()
 
+    def __str__(self):
+        return self.t.to_string()
+
 
 class LightCurveCleaner:
     """
@@ -170,6 +180,12 @@ class LightCurveCleaner:
     def __init__(self, verbose: bool = False):
         self.logger = CustomLogger(verbose=verbose)
         self.cut_history = CutHistory(verbose=verbose)
+
+    def reset(self):
+        """
+        Clear any prior cut history.
+        """
+        self.cut_history = CutHistory(verbose=self.logger.verbose)
 
     def apply_cut(
         self,
@@ -208,8 +224,17 @@ class LightCurveCleaner:
         :param max_value: Maximum allowed uncertainty in `duJy`.
         :return: Transient with uncertainty cut applied.
         """
-        self.apply_cut(transient, transient.colnames.dflux, flag, max_value=max_value)
-        self.cut_history.add_UncertaintyCut(flag=flag, max_value=max_value)
+        self.logger.info(f"\nApplying uncertainty cut of {max_value}")
+
+        transient = self.apply_cut(
+            transient, transient.colnames.dflux, flag, max_value=max_value
+        )
+
+        percent_cut = transient.get_sn().get_percent_flagged(flag=flag)
+        self.cut_history.add_UncertaintyCut(
+            flag=flag, max_value=max_value, percent_cut=percent_cut
+        )
+
         return transient
 
     def apply_UncertaintyEstimation(
@@ -226,6 +251,7 @@ class LightCurveCleaner:
         :param uncertainty_cut_flag: Flag used in the previous uncertainty cut for filtering out egregious outliers.
         :return: Updated transient with true uncertainties in dflux column and the `sigma_extra` we added stored in a new column `dflux_offset_in_quadrature`.
         """
+        self.logger.info(f"\nApplying true uncertainties estimation")
         stats_table = transient.get_uncert_est_stats(
             temp_x2_max_value=temp_x2_max_value,
             uncertainty_cut_flag=uncertainty_cut_flag,
@@ -252,7 +278,9 @@ class LightCurveCleaner:
                 'The extra noise was added to the uncertainties of the SN light curve and copied to the "duJy_new" column'
             )
 
-        self.cut_history.add_UncertaintyEstimation(temp_x2_max_value=temp_x2_max_value)
+        self.cut_history.add_UncertaintyEstimation(
+            final_sigma_extra=final_sigma_extra, temp_x2_max_value=temp_x2_max_value
+        )
 
         return transient
 
@@ -260,12 +288,12 @@ class LightCurveCleaner:
         self,
         transient: Transient,
         flag: int = 0x1,
-        max_value: float = 10,
-        snr_bound: float = 3,
+        max_value: float = 10.0,
+        snr_bound: float = 3.0,
         table_start: int = 3,
         table_stop: int = 50,
         table_step: int = 1,
-    ) -> Transient:
+    ) -> tuple[Transient, ChiSquareCutsTable]:
         """
         Mask measurements with PSF chi-square greater than `max_value`.
         Return updated transient and table of contamination/loss for a range of possible chi-square cuts.
@@ -279,6 +307,7 @@ class LightCurveCleaner:
         :param table_step: Step size for chi-square sweep.
         :return: Tuple (transient, ChiSquareCutsTable instance)
         """
+        self.logger.info(f"\nApplying chi-square cut of {max_value}")
         # calculate contamination and loss for possible chi-square cuts in range (min_cut, max_cut)
         stats_table = ChiSquareCutsTable(
             (
@@ -287,6 +316,7 @@ class LightCurveCleaner:
                 else transient.get_sn()
             ),
             snr_bound=snr_bound,
+            verbose=self.logger.verbose,
         )
         stats_table.calculate_table(
             start=table_start,
@@ -298,13 +328,16 @@ class LightCurveCleaner:
         # they are not getting returned right now because `stats_table` will have contamination and loss for the chi-square cuts in the range (`table_start`, `table_stop`)
         contamination, loss = stats_table.get_contamination_and_loss(max_value)
         self.logger.info(
-            f"Applying chi-square cut of {max_value:0.2f} with {contamination:0.2f}% contamination and {loss:0.2f}% loss"
+            f"Selected chi-square cut of {max_value:0.2f} has {contamination:0.2f}% contamination and {loss:0.2f}% loss"
         )
 
         # apply it
         transient.apply_cut(transient.colnames.chisquare, flag, max_value=max_value)
 
-        self.cut_history.add_ChiSquareCut(flag=flag, max_value=max_value)
+        percent_cut = transient.get_sn().get_percent_flagged(flag=flag)
+        self.cut_history.add_ChiSquareCut(
+            flag=flag, max_value=max_value, percent_cut=percent_cut
+        )
 
         return transient, stats_table
 
@@ -340,6 +373,8 @@ class LightCurveCleaner:
         :param Ngood_flag: Flag for too few good measurements in the epoch.
         :return: Updated transient with control-informed mask applied.
         """
+        self.logger.info(f"\nApplying control light curve cut")
+
         transient.calculate_control_stats(previous_flags)
         transient.flag_by_control_stats(
             flag=flag,
@@ -354,6 +389,7 @@ class LightCurveCleaner:
             Ngood_flag=Ngood_flag,
         )
 
+        percent_cut = transient.get_sn().get_percent_flagged(flag=flag)
         self.cut_history.add_ControlLightCurveCut(
             flag=flag,
             questionable_flag=questionable_flag,
@@ -365,6 +401,7 @@ class LightCurveCleaner:
             Nclip_flag=Nclip_flag,
             Ngood_min=Ngood_min,
             Ngood_flag=Ngood_flag,
+            percent_cut=percent_cut,
         )
 
         return transient
@@ -397,6 +434,10 @@ class LightCurveCleaner:
         :param flux2mag_sigmalimit: Sigma threshold for converting flux to mag in final binned LC.
         :return: Tuple (cleaned transient, binned transient).
         """
+        self.logger.info(
+            f"\nApplying bad day cut and binning with MJD bin size of {mjd_bin_size} days"
+        )
+
         binned_transient = transient.get_BinnedTransient(
             previous_flags,
             flag=flag,
@@ -409,6 +450,7 @@ class LightCurveCleaner:
             flux2mag_sigmalimit=flux2mag_sigmalimit,
         )
 
+        percent_cut = binned_transient.get_sn().get_percent_flagged(flag=flag)
         self.cut_history.add_BadDayCut(
             flag=flag,
             mjd_bin_size=mjd_bin_size,
@@ -417,18 +459,21 @@ class LightCurveCleaner:
             Ngood_min=Ngood_min,
             large_num_clipped_flag=large_num_clipped_flag,
             small_num_unmasked_flag=small_num_unmasked_flag,
+            percent_cut=percent_cut,
         )
 
         return transient, binned_transient
 
-    def clean_default(
+    def apply_all_default(
         self,
         transient: Transient,
         uncertainty_cut: float = 160.0,
-        uncertainty_cut_flag: int = 0x1,
+        uncertainty_cut_flag: int = 0x2,
         chi_square_cut: float = 10.0,
-        chi_square_cut_flag: int = 0x2,
-        controls_cut_flag=0x400000,
+        chi_square_cut_flag: int = 0x1,
+        controls_cut_flag: int = 0x400000,
+        bad_day_cut_flag: int = 0x800000,
+        mjd_bin_size: float = 1.0,
     ) -> tuple[Transient, BinnedTransient, CutHistory]:
         """
         Run the default cleaning pipeline on a transient.
@@ -436,6 +481,8 @@ class LightCurveCleaner:
         :param transient: The transient to clean.
         :returns: Tuple(transient, binned_transient, cut_history)
         """
+        self.reset()
+
         transient = self.apply_UncertaintyCut(
             transient, flag=uncertainty_cut_flag, max_value=uncertainty_cut
         )
@@ -456,6 +503,8 @@ class LightCurveCleaner:
         )
 
         previous_flags = previous_flags | controls_cut_flag
-        transient, binned_transient = self.apply_BadDayCut(transient, previous_flags)
+        transient, binned_transient = self.apply_BadDayCut(
+            transient, previous_flags, flag=bad_day_cut_flag, mjd_bin_size=mjd_bin_size
+        )
 
         return transient, binned_transient, self.cut_history

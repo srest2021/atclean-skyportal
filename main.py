@@ -9,19 +9,7 @@ from typing import Dict, List
 from clean import LightCurveCleaner
 from download import AtlasLightCurveDownloader, ControlCoordinatesTable
 from lightcurve import LightCurve, BaseTransient
-from utils import (
-    RA,
-    BadDayCut,
-    ChiSquareCut,
-    ControlLightCurveCut,
-    Coordinates,
-    CustomLogger,
-    CutList,
-    Dec,
-    UncertaintyCut,
-    UncertaintyEstimation,
-    parse_arg_coords,
-)
+from utils import RA, Coordinates, CustomLogger, Dec, parse_arg_coords
 
 
 def define_args(parser=None, usage=None, conflict_handler="resolve"):
@@ -108,14 +96,16 @@ if __name__ == "__main__":
         flux2mag_sigmalimit=args.flux2mag_sigmalimit,
     )
 
-    # clean
-    # TODO
-
     sys.exit()
 
+    # clean
     cleaner = LightCurveCleaner(verbose=args.verbose)
-    transient_o, binned_transient_o, cut_history_o = cleaner.clean_default(transient_o)
-    transient_c, binned_transient_c, cut_history_c = cleaner.clean_default(transient_c)
+    transient_o, binned_transient_o, cut_history_o = cleaner.apply_all_default(
+        transient_o
+    )
+    transient_c, binned_transient_c, cut_history_c = cleaner.apply_all_default(
+        transient_c
+    )
 
     final_transient = transient_o.merge(transient_c)
     final_transient.postprocess()

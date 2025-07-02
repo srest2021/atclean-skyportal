@@ -86,7 +86,7 @@ class BaseLightCurve(pdastrostatsclass):
     def preprocess(self, **kwargs):
         """
         Preprocess the light curve data.
-        Calculates the SNR column.
+        Calculates the SNR column as flux/dflux and replaces infs with NaNs.
         """
         if self.t is None or self.t.empty:
             return
@@ -184,10 +184,10 @@ class BaseLightCurve(pdastrostatsclass):
         If no flag value specified, count all flags.
 
         :param flag: Optionally specify a single flag.
-        :return: Fraction of rows flagged.
+        :return: Percent of rows flagged.
         """
         bad_ix = self.get_bad_indices(flag=flag)
-        return len(bad_ix) / len(self.t)
+        return 100 * len(bad_ix) / len(self.t)
 
     def get_good_indices(self, flag: Optional[int] = None) -> List[int]:
         """
@@ -337,17 +337,17 @@ class BaseLightCurve(pdastrostatsclass):
 
     def calculate_snr_col(self):
         """
-        Calculate the SNR column as flux/dflux and replace infs with NaNs.
+        Calculates the SNR column as flux/dflux and replaces infs with NaNs.
         """
         if self.t is None or self.t.empty:
             return
 
         # replace infs with NaNs
-        self.logger.info("Replacing infs with NaNs")
+        # self.logger.info("Replacing infs with NaNs")
         self.t.replace([np.inf, -np.inf], np.nan, inplace=True)
 
         # calculate flux/dflux
-        self.logger.info(f"Calculating flux/dflux for '{self.colnames.snr}' column")
+        # self.logger.info(f"Calculating flux/dflux for '{self.colnames.snr}' column")
         self.t[self.colnames.snr] = (
             self.t[self.colnames.flux] / self.t[self.colnames.dflux]
         )
@@ -511,16 +511,16 @@ class LightCurve(BaseLightCurve):
         # remove rows with duJy=0 or uJy=nan
         dflux_zero_ix = self.ix_inrange(colnames=self.colnames.dflux, lowlim=0, uplim=0)
         flux_nan_ix = self.ix_is_null(colnames=self.colnames.flux)
-        self.logger.info(
-            f'Deleting {len(dflux_zero_ix) + len(flux_nan_ix)} rows with "duJy"==0 or "uJy"==NaN'
-        )
+        # self.logger.info(
+        #     f'Deleting {len(dflux_zero_ix) + len(flux_nan_ix)} rows with "duJy"==0 or "uJy"==NaN'
+        # )
         if len(AorB(dflux_zero_ix, flux_nan_ix)) > 0:
             self.t = self.t.drop(AorB(dflux_zero_ix, flux_nan_ix))
 
         # convert flux to magnitude
-        self.logger.info(
-            "Converting flux to magnitude (and overwriting original ATLAS 'm' and 'dm' columns)"
-        )
+        # self.logger.info(
+        #     "Converting flux to magnitude (and overwriting original ATLAS 'm' and 'dm' columns)"
+        # )
         self.flux2mag(
             self.colnames.flux,
             self.colnames.dflux,
@@ -558,6 +558,15 @@ class LightCurve(BaseLightCurve):
         Remove sigma_extra that was previously added in quadrature to the dflux column.
         Assumes sigma_extra is stored in self.colnames.dflux_offset as a constant value.
         """
+        if (
+            not self.colnames.has("dflux_offset")
+            or self.colnames.dflux_offset not in self.t.columns
+        ):
+            self.logger.warning(
+                f"dflux offset column not found in control light curve #{self.control_index}; skipping noise removal..."
+            )
+            return
+
         # get sigma_extra from the offset column
         sigma_extra = self.t[self.colnames.dflux_offset].iloc[0]
 
@@ -907,11 +916,11 @@ class BinnedLightCurve(BaseLightCurve):
         Exclude NaN bins from the percentage.
 
         :param flag: Optionally specify a single flag.
-        :return: Fraction of rows flagged.
+        :return: Percent of rows flagged.
         """
         non_null_ix = self.ix_not_null(self.colnames.mjd)
         bad_ix = self.ix_masked(self.colnames.mask, maskval=flag, indices=non_null_ix)
-        return len(bad_ix) / len(non_null_ix)
+        return 100 * len(bad_ix) / len(non_null_ix)
 
 
 class BaseTransient:
@@ -957,6 +966,7 @@ class BaseTransient:
 
         :param flux2mag_sigmalimit: Sigma limit used when converting flux to magnitude.
         """
+        self.logger.info("\nPreprocessing all light curves")
         for i in self.lc_indices:
             self.get(i).preprocess(flux2mag_sigmalimit=flux2mag_sigmalimit)
 
@@ -1020,6 +1030,10 @@ class BaseTransient:
         if lc.control_index in self.lcs:
             self.logger.warning(
                 f"Control index {lc.control_index} already exists; overwriting..."
+            )
+        if (self.filt is not None or lc.filt is not None) and self.filt != lc.filt:
+            self.logger.warning(
+                f"Control index {lc.control_index} filter '{lc.filt}' does not match transient filter '{self.filt}'"
             )
         self.lcs[lc.control_index] = deepcopy(lc) if deep else lc
 
@@ -1294,6 +1308,10 @@ class Transient(BaseTransient):
         """
         for i in self.lc_indices:
             self.get(i).add_noise_to_dflux(sigma_extra)
+
+    def remove_noise_from_dflux(self):
+        for i in self.lc_indices:
+            self.get(i).remove_noise_from_dflux()
 
     def calculate_control_stats(self, previous_flags: int, prefix="controls_"):
         """

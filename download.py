@@ -213,7 +213,7 @@ class ControlCoordinatesTable:
         :param transient_name: Name of the transient associated with this control point.
         """
         row = {
-            "tnsname": transient_name,
+            "transient_name": transient_name,
             "control_index": control_index,
             "ra": coords.get_RA_str(),
             "dec": coords.get_Dec_str(),

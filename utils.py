@@ -1014,17 +1014,25 @@ class PrimaryFlag:
     Represents a primary bitmask flag used to describe a cut condition.
     """
 
-    def __init__(self, name: str, value: int, description: Optional[str] = None):
+    def __init__(
+        self,
+        name: str,
+        value: int,
+        description: Optional[str] = None,
+        percent_cut: Optional[float] = None,
+    ):
         """
         Initialize a PrimaryFlag.
 
         :param name: Name of the flag.
         :param value: Integer value of the bitmask flag.
         :param description: Optional description of the flag.
+        :param percent_cut: Optional percent of measurements cut from the SN light curve.
         """
         self.name = name
         self.description = description
         self.value = value
+        self.percent_cut = percent_cut
         self._is_primary = True
 
     @property
@@ -1035,7 +1043,7 @@ class PrimaryFlag:
         return hex(self.value)
 
     def __str__(self):
-        return f"'{self.name}' {'primary' if self._is_primary else 'secondary'} flag ({self.hex}): {self.description}"
+        return f"'{self.name}' {'primary' if self._is_primary else 'secondary'} flag (hex value {self.hex}{f'; {self.percent_cut:0.2f}% flagged in SN' if self.percent_cut is not None else ''}):\n\t{self.description}"
 
 
 class Flag(PrimaryFlag):
@@ -1149,7 +1157,7 @@ class Cut:
         return combine_flags(flags)
 
     def __str__(self):
-        out = [f"{self.name}{f': {self.description}' if self.description else ''}"]
+        out = [f"{self.name}:{f' {self.description}' if self.description else ''}"]
         if self._primary_flag is not None:
             out.append("- " + self._primary_flag.__str__())
         if self._secondary_flags:
@@ -1197,45 +1205,69 @@ class CutHistory:
         else:
             self.logger.warning(f"Cannot remove nonexistent cut '{name}'")
 
-    def add_UncertaintyCut(self, flag: int = 0x2, max_value: float = 160):
+    def get_primary_flags(self):
+        res = 0
+        for cut in self._cuts.values():
+            if cut.primary_flag is not None:
+                res |= cut.primary_flag.value
+        return res
+
+    def add_UncertaintyCut(
+        self,
+        flag: int = 0x2,
+        max_value: float = 160,
+        percent_cut: Optional[float] = None,
+    ):
         """
         Add a cut for high measurement uncertainty.
 
         :param flag: Bitmask flag value.
         :param max_value: Maximum acceptable uncertainty.
+        :param percent_cut: Optional percent of measurements cut from the SN light curve.
         """
         flag = PrimaryFlag(
             "high_uncertainty",
             flag,
-            f"measurement has an uncertainty above {max_value}",
+            description=f"measurement has an uncertainty above {max_value}",
+            percent_cut=percent_cut,
         )
         cut = Cut("Uncertainty Cut", primary_flag=flag, verbose=self.logger.verbose)
         self.add(cut)
 
-    def add_UncertaintyEstimation(self, temp_x2_max_value: float = 20):
+    def add_UncertaintyEstimation(
+        self, final_sigma_extra: float, temp_x2_max_value: float = 20
+    ):
         """
         Add true uncertainties estimation with temporary PSF chi-square filtering.
 
+        :param final_sigma_extra: Extra noise added in quadrature to the uncertainty column.
         :param temp_x2_max_value: Chi-square value used to pre-filter egregious outliers.
         """
         cut = Cut(
             "True Uncertainties Estimation",
-            description=f"We attempt to account for an extra noise source in the data by estimating the true typical uncertainty, deriving the additional systematic uncertainty, and applying this extra noise to the uncertainty column. We also use a temporary, very high PSF chi-square cut value of {temp_x2_max_value} to eliminate the most egregious outliers from the data before estimating the true uncertainties.",
+            description=f"We attempt to account for an extra noise source in the data. We estimate the true typical uncertainty, derive the additional systematic uncertainty ({final_sigma_extra:0.2f}), and apply this extra noise to the uncertainty column. We also use a temporary, very high PSF chi-square cut value of {temp_x2_max_value} to eliminate the most egregious outliers from the data before estimating the true uncertainties.",
             verbose=self.logger.verbose,
         )
         self.add(cut)
 
-    def add_ChiSquareCut(self, flag: int = 0x1, max_value: float = 10):
+    def add_ChiSquareCut(
+        self,
+        flag: int = 0x1,
+        max_value: float = 10,
+        percent_cut: Optional[float] = None,
+    ):
         """
         Add a cut for high PSF chi-square values.
 
         :param flag: Bitmask flag value.
         :param max_value: Maximum acceptable chi-square value.
+        :param percent_cut: Optional percent of measurements cut from the SN light curve.
         """
         flag = PrimaryFlag(
             "high_psf_chi_square",
             flag,
-            f"measurement has a PSF chi-square above {max_value}",
+            description=f"measurement has a PSF chi-square above {max_value}",
+            percent_cut=percent_cut,
         )
         cut = Cut("PSF Chi-Square Cut", primary_flag=flag, verbose=self.logger.verbose)
         self.add(cut)
@@ -1252,6 +1284,7 @@ class CutHistory:
         Nclip_flag: int = 0x400,
         Ngood_min: int = 4,
         Ngood_flag: int = 0x800,
+        percent_cut: Optional[float] = None,
     ):
         """
         Add a cut based on control light curve statistics.
@@ -1266,11 +1299,13 @@ class CutHistory:
         :param Nclip_flag: Flag for too many clipped measurements in the epoch.
         :param Ngood_min: Minimum required good measurements.
         :param Ngood_flag: Flag for too few good measurements in the epoch.
+        :param percent_cut: Optional percent of measurements cut from the SN light curve.
         """
         primary_flag = PrimaryFlag(
             "bad_epoch",
             flag,
             description="control flux corresponding to this epoch is inconsistent with 0",
+            percent_cut=percent_cut,
         )
 
         secondary_flags = [
@@ -1319,6 +1354,7 @@ class CutHistory:
         Ngood_min: int = 2,
         large_num_clipped_flag: int = 0x1000,
         small_num_unmasked_flag: int = 0x2000,
+        percent_cut: Optional[float] = None,
     ):
         """
         Add a cut for identifying bad days using binning and statistics.
@@ -1330,11 +1366,13 @@ class CutHistory:
         :param Ngood_min: Minimum number of good points required in a bin.
         :param large_num_clipped_flag: Flag for excessive clipping.
         :param small_num_unmasked_flag: Flag for insufficient unmasked measurements.
+        :param percent_cut: Optional percent of measurements cut from the SN light curve.
         """
         primary_flag = PrimaryFlag(
             "bad_day",
             flag,
             description=f"binned epoch has chi-square higher than {x2_max}, number of clipped measurements higher than {Nclip_max}, number of good measurements lower than {Ngood_min}",
+            percent_cut=percent_cut,
         )
 
         secondary_flags = [
@@ -1352,7 +1390,7 @@ class CutHistory:
 
         cut = Cut(
             "Bad Day Cut (Binning)",
-            description=f"",
+            description=f"Bin the light curve into bins of {mjd_bin_size} day(s) and flag bad days",
             primary_flag=primary_flag,
             secondary_flags=secondary_flags,
             verbose=self.logger.verbose,
@@ -1362,6 +1400,6 @@ class CutHistory:
     def __str__(self):
         if not self._cuts:
             return "CutHistory: no cuts applied."
-        return "-- Cut History --\n" + "\n".join(
+        return "-- CUT HISTORY --\n" + "\n".join(
             cut.__str__() for cut in self._cuts.values()
         )
