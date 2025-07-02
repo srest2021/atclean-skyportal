@@ -37,7 +37,7 @@ class BaseLightCurve(pdastrostatsclass):
         """
         Initialize a BaseLightCurve instance.
 
-        :param control_index: Index of the object (0 for SN light curve, 1+ for control light curves).
+        :param control_index: Index of the SN or control light curve (0 for SN light curve, 1+ for control light curves).
         :param coords: Coordinates of the object.
         :param colnames: ColumnNames instance describing column mappings (i.e., internal key to actual column string).
         :param filt: Optional filter name (e.g., 'o' or 'c').
@@ -480,7 +480,7 @@ class LightCurve(BaseLightCurve):
         """
         Initialize a LightCurve with cleaned column names.
 
-        :param control_index: Index of the control light curve (0 = SN, >0 = control).
+        :param control_index: Index of the SN or control light curve (0 = SN, >0 = control).
         :param coords: Sky coordinates of the light curve.
         :param filt: Optional filter name ('o' or 'c').
         :param verbose: Whether to enable verbose logging.
@@ -872,7 +872,7 @@ class BinnedLightCurve(BaseLightCurve):
         """
         Initialize a BinnedLightCurve with specified MJD bin size.
 
-        :param control_index: Index of the object (0 for SN light curve, 1+ for control light curves).
+        :param control_index: Index of the SN or control light curve (0 for SN light curve, 1+ for control light curves).
         :param coords: Coordinates of the object.
         :param mjd_bin_size: Bin size in MJD days.
         :param filt: Optional filter name ('o' or 'c').
@@ -935,7 +935,7 @@ class BaseTransient:
         """
         Get the BaseLightCurve for the given control index.
 
-        :param control_index: Index of the light curve to retrieve.
+        :param control_index: Index of the SN or control light curve.
         :raises ValueError: If no light curve exists with that control index.
         :returns: The BaseLightCurve instance.
         """

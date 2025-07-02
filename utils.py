@@ -137,7 +137,7 @@ class BaseAngle(ABC):
         :param angle: Input angle (string or Angle).
         """
         self.angle: Angle = (
-            self._parse_angle(angle) if isinstance(angle, str) else angle
+            angle if isinstance(angle, Angle) else self._parse_angle(str(angle))
         )
 
     @abstractmethod

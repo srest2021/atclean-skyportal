@@ -19,6 +19,14 @@ from utils import Coordinates, CustomLogger, new_row
 
 
 def build_payload(coords: Coordinates, min_mjd: float, max_mjd: float) -> Dict:
+    """
+    Build the payload dictionary to submit to the ATLAS API queue.
+
+    :param coords: Coordinates object of the transient to request.
+    :param min_mjd: Minimum MJD.
+    :param max_mjd: Maximum MJD.
+    :return: Dictionary for API request.
+    """
     return {
         "ra": coords.get_RA_str(),
         "dec": coords.get_Dec_str(),
@@ -31,6 +39,16 @@ def build_payload(coords: Coordinates, min_mjd: float, max_mjd: float) -> Dict:
 def query_atlas(
     headers, coords: Coordinates, min_mjd: float, max_mjd: float, verbose: bool = False
 ) -> pd.DataFrame:
+    """
+    Query the ATLAS API and return a light curve DataFrame for the given coordinates and MJD range.
+
+    :param headers: Authenticated request headers.
+    :param coords: Coordinates object.
+    :param min_mjd: Minimum MJD for query.
+    :param max_mjd: Maximum MJD for query.
+    :param verbose: Whether to print progress messages.
+    :return: Light curve as a pandas DataFrame.
+    """
     logger = CustomLogger(verbose=verbose)
 
     baseurl = "https://fallingstar-data.com/forcedphot"
@@ -104,6 +122,11 @@ def query_atlas(
 
 
 class ControlCoordinatesTable:
+    """
+    Class to construct and manage a circular pattern of control light curve coordinates
+    around either the SN location or a nearby bright source.
+    """
+
     def __init__(
         self,
         sn_coords: Coordinates,
@@ -113,6 +136,19 @@ class ControlCoordinatesTable:
         num_controls: int = 8,
         verbose: bool = False,
     ):
+        """
+        Initialize a ControlCoordinatesTable to define a circular pattern of control light curves
+        around a central coordinate (typically the SN or a nearby bright object).
+
+        :param sn_coords: Coordinates of the SN (used as reference and as center if `center_coords` is not given).
+        :param center_coords: Optional central coordinate for control pattern (e.g., a nearby bright source).
+                            If None, the SN coordinates are used as center.
+        :param sn_min_dist: Minimum allowed angular separation (arcsec) between the SN and any control light curve.
+                            Used to avoid contamination from the SN when centering on a bright object.
+        :param radius: Angular radius (arcsec) of the control light curve circle pattern.
+        :param num_controls: Number of control light curves to generate around the center.
+        :param verbose: If True, print detailed logging information.
+        """
         self.logger = CustomLogger(verbose=verbose)
 
         self.t: Optional[pd.DataFrame] = None
@@ -129,6 +165,13 @@ class ControlCoordinatesTable:
         self.construct()
 
     def update_filt_lens(self, control_index: int, o_len: int, c_len: int):
+        """
+        Update the number of detections in each filter for a given control light curve.
+
+        :param control_index: Index of the SN or control light curve.
+        :param o_len: Number of 'o' filter detections.
+        :param c_len: Number of 'c' filter detections.
+        """
         if self.t is None:
             raise RuntimeError("Table (self.t) cannot be None")
 
@@ -155,10 +198,20 @@ class ControlCoordinatesTable:
         ra_offset: float | Angle = 0.0,
         dec_offset: float | Angle = 0.0,
         radius: float | Angle = 0.0,
-        n_detec: int = 0,
         filt_lens: Optional[Dict[str, int]] = None,
         transient_name: str = str(np.nan),
     ):
+        """
+        Add a row to the control coordinates table with metadata and optional filter detection counts.
+
+        :param control_index: Index of the SN or control light curve.
+        :param coords: Coordinates object representing the RA/Dec of the control light curve.
+        :param ra_offset: Offset in RA from the center position (float or Angle).
+        :param dec_offset: Offset in Dec from the center position (float or Angle).
+        :param radius: Radius from center coordinates to the control coordinates (float or Angle).
+        :param filt_lens: Optional dict of detection counts per filter (e.g., {"o": 22, "c": 18}).
+        :param transient_name: Name of the transient associated with this control point.
+        """
         row = {
             "tnsname": transient_name,
             "control_index": control_index,
@@ -175,16 +228,21 @@ class ControlCoordinatesTable:
                 else dec_offset
             ),
             "radius_arcsec": radius.arcsecond if isinstance(radius, Angle) else radius,
-            "n_detec": n_detec,
         }
 
         if not filt_lens is None:
+            total = 0
             for filt in filt_lens:
                 row[f"n_detec_{filt}"] = filt_lens[filt]
+                total += filt_lens[filt]
+            row["n_detec"] = total
 
         self.t = new_row(self.t, row)
 
     def calculate_and_add_row(self, control_index: int):
+        """
+        Compute offset RA/Dec for a control light curve and add it to the table.
+        """
         angle = Angle(control_index * 360.0 / self.num_controls, u.degree)
 
         # calculate ra
@@ -219,6 +277,9 @@ class ControlCoordinatesTable:
         )
 
     def construct(self, transient_name: str = "unnamed_transient"):
+        """
+        Generate the full control coordinates table for this transient.
+        """
         if self.center_coords is None:
             self.logger.info(
                 f'Setting circle pattern of {self.num_controls} control light curves around SN location with radius of {self.radius}" from center'
@@ -277,6 +338,14 @@ class AtlasAuthenticator:
     def authenticate(
         username: str, password: str, verbose: bool = False
     ) -> Dict[str, str]:
+        """
+        Authenticate with the ATLAS API and return request headers.
+
+        :param username: ATLAS API username.
+        :param password: ATLAS API password.
+        :param verbose: Enable verbose logging.
+        :return: Dictionary of request headers with token.
+        """
         logger = CustomLogger(verbose=verbose)
         logger.info("Connecting to ATLAS API", newline=True)
         resp = requests.post(
@@ -292,12 +361,23 @@ class AtlasAuthenticator:
 
 
 class AtlasLightCurveDownloader:
+    """
+    Class for downloading ATLAS light curves using the API and constructing Transient objects.
+    """
+
     def __init__(
         self,
         atlas_username: str,
         atlas_password: str,
         verbose: bool = False,
     ):
+        """
+        Authenticate and initialize downloader.
+
+        :param atlas_username: ATLAS API username.
+        :param atlas_password: ATLAS API password.
+        :param verbose: Enable verbose logging.
+        """
         self.logger = CustomLogger(verbose=verbose)
         self.headers = AtlasAuthenticator.authenticate(atlas_username, atlas_password)
         if self.headers is None:
@@ -309,6 +389,14 @@ class AtlasLightCurveDownloader:
         lookbacktime: Optional[float] = None,
         max_mjd: Optional[float] = None,
     ) -> pd.DataFrame:
+        """
+        Download a light curve from the ATLAS API.
+
+        :param coords: Coordinates for the query.
+        :param lookbacktime: Time in days to look back from now.
+        :param max_mjd: Optional MJD upper bound.
+        :return: Pandas DataFrame with light curve data.
+        """
         if lookbacktime is not None:
             min_mjd = float(Time.now().mjd - lookbacktime)
         else:
@@ -345,6 +433,15 @@ class AtlasLightCurveDownloader:
         lookbacktime: Optional[float] = None,
         max_mjd: Optional[float] = None,
     ):
+        """
+        Construct a LightCurve object for the given control index and coordinates.
+
+        :param control_index: Index of the SN or control light curve.
+        :param coords: Coordinates for the query.
+        :param lookbacktime: Time in days to look back from now.
+        :param max_mjd: Optional MJD upper bound.
+        :return: LightCurve instance.
+        """
         result = self.download_lc(coords, lookbacktime=lookbacktime, max_mjd=max_mjd)
         lc = LightCurve(control_index, coords, verbose=self.logger.verbose)
         lc.set(result, deep=False)
@@ -357,6 +454,15 @@ class AtlasLightCurveDownloader:
         max_mjd: Optional[float] = None,
         flux2mag_sigmalimit: float = 3.0,
     ) -> tuple[Transient, Transient]:
+        """
+        Download all SN and control light curves from ATLAS and return filtered Transient objects.
+
+        :param control_coords_table: Table of control coordinates.
+        :param lookbacktime: Time in days to look back.
+        :param max_mjd: Optional max MJD.
+        :param flux2mag_sigmalimit: Limit for flux-to-mag conversion.
+        :return: Tuple of Transient objects (o-band, c-band).
+        """
         # make a multi-filter transient object
         transient = Transient(verbose=self.logger.verbose)
 
