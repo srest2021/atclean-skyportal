@@ -539,6 +539,7 @@ class LightCurve(BaseLightCurve):
     def add_noise_to_dflux(self, sigma_extra: float):
         """
         Add additional noise in quadrature to the dflux column.
+        Store the sigma_extra we added in a new column `dflux_offset_in_quadrature`.
         """
         # add in quadrature to dflux column
         self.t[self.colnames.dflux] = np.sqrt(
@@ -1239,7 +1240,7 @@ class Transient(BaseTransient):
         and sigma_extra for each control light curve.
 
         :param temp_x2_max_value: Temporary PSF chi-square upper bound for filtering out egregious outliers.
-        :param uncertainty_cut_flag: Flag used in the previous uncertainty cut for filtering out egregious outliers..
+        :param uncertainty_cut_flag: Flag used in the previous uncertainty cut for filtering out egregious outliers.
         :return: DataFrame with median_dflux, stdev, and sigma_extra for each control index.
         """
 
@@ -1289,6 +1290,7 @@ class Transient(BaseTransient):
     def add_noise_to_dflux(self, sigma_extra: float):
         """
         Add extra noise in quadrature to all light curves.
+        Store the sigma_extra we added in a new column `dflux_offset_in_quadrature`.
         """
         for i in self.lc_indices:
             self.get(i).add_noise_to_dflux(sigma_extra)

@@ -163,7 +163,9 @@ class ChiSquareCutsTable:
 
 
 class LightCurveCleaner:
-    """Utility class for cleaning ATLAS light curves"""
+    """
+    Utility class for cleaning ATLAS light curves
+    """
 
     def __init__(self, verbose: bool = False):
         self.logger = CustomLogger(verbose=verbose)
@@ -179,27 +181,13 @@ class LightCurveCleaner:
         indices: Optional[List[int]] = None,
     ) -> Transient:
         """
-        Apply a value-based cut to a column in the transient, masking out-of-range data.
+        Apply a flag across all light curves to rows where the column value is outside the allowed range.
 
-        Parameters
-        ----------
-        transient : Transient
-            The transient object to apply the cut to.
-        column : str
-            The name of the column to cut on.
-        flag : int
-            The bitmask flag to apply to masked data.
-        min_value : float, optional
-            Minimum allowed value (inclusive).
-        max_value : float, optional
-            Maximum allowed value (inclusive).
-        indices : list of int, optional
-            Indices to consider for the cut. If None, all indices are used.
-
-        Returns
-        -------
-        Transient
-            The transient with the cut applied.
+        :param column: Name of the column to cut on.
+        :param flag: Bitmask flag to apply.
+        :param min_value: Minimum allowed value.
+        :param max_value: Maximum allowed value.
+        :param indices: Optional subset of rows to check.
         """
         transient.apply_cut(
             column, flag, min_value=min_value, max_value=max_value, indices=indices
@@ -213,16 +201,12 @@ class LightCurveCleaner:
         max_value: float = 160,
     ) -> Transient:
         """
-        Mask data points with uncertainty above a threshold.
+        Mask measurements with uncertainty greater than `max_value`.
 
-        Parameters
-        ----------
-        transient : Transient
-            The transient to apply the uncertainty cut to.
-        flag : int, optional
-            The bitmask flag to apply to masked data (default: 0x2).
-        max_value : float, optional
-            Maximum allowed uncertainty value (default: 160).
+        :param transient: Transient to modify.
+        :param flag: Bitmask flag to apply.
+        :param max_value: Maximum allowed uncertainty in `duJy`.
+        :return: Transient with uncertainty cut applied.
         """
         self.apply_cut(transient, transient.colnames.dflux, flag, max_value=max_value)
         self.cut_history.add_UncertaintyCut(flag=flag, max_value=max_value)
@@ -235,23 +219,12 @@ class LightCurveCleaner:
         uncertainty_cut_flag: int = 0x2,
     ) -> Transient:
         """
-        Estimate and, if needed, increase uncertainties by adding systematic noise in quadrature.
+        Estimate true uncertainties based on control light curves.
 
-        A new column, "dflux_offset_in_quadrature", containing the calculated systematic uncertainty will be added to each light curve.
-
-        Parameters
-        ----------
-        transient : Transient
-            The transient to update uncertainties for.
-        temp_x2_max_value : float, optional
-            Maximum chi-square value for temporary cut (default: 20), by which we remove egregious outliers before calculating how much noise to add.
-        uncert_cut_flag : int, optional
-            Bitmask flag for uncertainty cut (default: 0x2), by which we remove egregious outliers before calculating how much noise to add.
-
-        Returns
-        -------
-        Transient
-            The transient with an updated uncertainty column and a new "dflux_offset_in_quadrature" column.
+        :param transient: Transient to update.
+        :param temp_x2_max_value: Temporary PSF chi-square upper bound for filtering out egregious outliers.
+        :param uncertainty_cut_flag: Flag used in the previous uncertainty cut for filtering out egregious outliers.
+        :return: Updated transient with true uncertainties in dflux column and the `sigma_extra` we added stored in a new column `dflux_offset_in_quadrature`.
         """
         stats_table = transient.get_uncert_est_stats(
             temp_x2_max_value=temp_x2_max_value,
@@ -294,29 +267,17 @@ class LightCurveCleaner:
         table_step: int = 1,
     ) -> Transient:
         """
-        Apply a chi-square cut to the transient and compute contamination/loss statistics for a range of possible chi-squares.
+        Mask measurements with PSF chi-square greater than `max_value`.
+        Return updated transient and table of contamination/loss for a range of possible chi-square cuts.
 
-        Parameters
-        ----------
-        transient : Transient
-            The transient to apply the chi-square cut to.
-        flag : int, optional
-            Bitmask flag for masked data (default: 0x1).
-        max_value : float, optional
-            Maximum allowed chi-square value (default: 10).
-        snr_bound : float, optional
-            SNR bound for good/bad classification (default: 3).
-        table_start : int, optional
-            Chi-square start value for table containing contamination and loss statistics (default: 3).
-        table_stop : int, optional
-            Chi-square stop value for table containing contamination and loss statistics (default: 50).
-        table_step : int, optional
-            Step size for the range of chi-square cuts listed in the table (default: 1).
-
-        Returns
-        -------
-        tuple
-            The transient with the cut applied and the table containing contamination and loss statistics for the range of possible chi-squares.
+        :param transient: Transient to apply cut to.
+        :param flag: Bitmask flag to apply to bad chi-square measurements.
+        :param max_value: Max allowed chi-square value.
+        :param snr_bound: SNR threshold to define good vs. bad points.
+        :param table_start: Starting chi-square value for stats table.
+        :param table_stop: Ending chi-square value for stats table.
+        :param table_step: Step size for chi-square sweep.
+        :return: Tuple (transient, ChiSquareCutsTable instance)
         """
         # calculate contamination and loss for possible chi-square cuts in range (min_cut, max_cut)
         stats_table = ChiSquareCutsTable(
@@ -333,7 +294,8 @@ class LightCurveCleaner:
             step=table_step,
         )
 
-        # get exact contamination and loss for selected cut
+        # get the exact contamination and loss for the selected cut
+        # they are not getting returned right now because `stats_table` will have contamination and loss for the chi-square cuts in the range (`table_start`, `table_stop`)
         contamination, loss = stats_table.get_contamination_and_loss(max_value)
         self.logger.info(
             f"Applying chi-square cut of {max_value:0.2f} with {contamination:0.2f}% contamination and {loss:0.2f}% loss"
@@ -362,42 +324,21 @@ class LightCurveCleaner:
         Ngood_flag: int = 0x800,
     ) -> Transient:
         """
-        Apply a set of control light curve quality cuts and flag questionable data.
+        Flag SN and control epochs based on statistics from control light curves.
 
-        Parameters
-        ----------
-        transient : Transient
-            The transient to apply control cuts to.
-        previous_flags : int
-            Any flags from previously applied cuts; used to remove bad measurements before calculating control statistics.
-        flag : int, optional
-            Bitmask flag for bad data (default: 0x400000).
-        questionable_flag : int, optional
-            Bitmask flag for questionable data (default: 0x80000).
-
-        The following max values and their corresponding flags are used in reference to the statistics returned from the 3-sigma clipping on a single epoch across controls.
-
-        x2_max : float, optional
-            Maximum allowed chi-square value (default: 2.5).
-        x2_flag : int, optional
-            Bitmask flag for chi-square cut (default: 0x100).
-        snr_max : float, optional
-            Maximum allowed SNR (default: 3.0).
-        snr_flag : int, optional
-            Bitmask flag for SNR cut (default: 0x200).
-        Nclip_max : int, optional
-            Maximum allowed number of clipped points (default: 2).
-        Nclip_flag : int, optional
-            Bitmask flag for Nclip cut (default: 0x400).
-        Ngood_min : int, optional
-            Minimum number of good points required (default: 4).
-        Ngood_flag : int, optional
-            Bitmask flag for Ngood cut (default: 0x800).
-
-        Returns
-        -------
-        Transient
-            The transient with control cuts applied.
+        :param transient: Transient to modify.
+        :param previous_flags: Combined bitmask flags of previous cuts which we use to exclude bad control measurements from the sigma clipping.
+        :param flag: Primary flag for bad epochs.
+        :param questionable_flag: Flag for questionable epochs.
+        :param x2_max: Maximum chi-square threshold of the sigma-clipped epoch.
+        :param x2_flag: Flag for high chi-square.
+        :param snr_max: Maximum SNR threshold of the sigma-clipped epoch.
+        :param snr_flag: Flag for high SNR.
+        :param Nclip_max: Maximum number of clipped measurements.
+        :param Nclip_flag: Flag for too many clipped measurements in the epoch.
+        :param Ngood_min: Minimum required good measurements.
+        :param Ngood_flag: Flag for too few good measurements in the epoch.
+        :return: Updated transient with control-informed mask applied.
         """
         transient.calculate_control_stats(previous_flags)
         transient.flag_by_control_stats(
@@ -442,36 +383,19 @@ class LightCurveCleaner:
         flux2mag_sigmalimit: float = 3.0,
     ) -> tuple[Transient, BinnedTransient]:
         """
-        Apply a "bad day" cut by binning data in time and flagging problematic bins.
+        Identify and flag "bad days" using binned statistics across control light curves.
 
-        Parameters
-        ----------
-        transient : Transient
-            The transient to apply the bad day cut to.
-        flag : int, optional
-            Bitmask flag for bad days (default: 0x800000).
-        mjd_bin_size : float, optional
-            Size of the time bin in MJD in days (default: 1.0).
-        flux2mag_sigmalimit : float, optional
-            The sigma limit used when converting flux to magnitude. Magnitudes are set as limits when their uncertainties are `NaN`.
-
-        The following max values and flags are used in reference to the statistics returned from the 3-sigma clipping on a single time bin.
-
-        x2_max : float, optional
-            Maximum allowed chi-square value per bin (default: 4.0).
-        Nclip_max : int, optional
-            Maximum allowed number of clipped points per bin (default: 1).
-        Ngood_min : int, optional
-            Minimum number of good points per bin (default: 2).
-        large_num_clipped_flag : int, optional
-            Bitmask flag for bins with too many clipped points (default: 0x1000).
-        small_num_unmasked_flag : int, optional
-            Bitmask flag for bins with too few points (default: 0x2000).
-
-        Returns
-        -------
-        tuple
-            The transient and the binned transient after applying the cut.
+        :param transient: Transient to clean.
+        :param previous_flags: Combined bitmask flags of previous cuts which we use to exclude bad measurements from the binning.
+        :param flag: Flag to apply to bins with invalid or bad data.
+        :param mjd_bin_size: Size of MJD bins in days.
+        :param x2_max: Maximum chi-square allowed for a good bin.
+        :param Nclip_max: Maximum allowed clipped points in a bin.
+        :param Ngood_min: Minimum number of good points required in a bin.
+        :param large_num_clipped_flag: Flag for excessive clipping.
+        :param small_num_unmasked_flag: Flag for insufficient unmasked measurements.
+        :param flux2mag_sigmalimit: Sigma threshold for converting flux to mag in final binned LC.
+        :return: Tuple (cleaned transient, binned transient).
         """
         binned_transient = transient.get_BinnedTransient(
             previous_flags,
@@ -505,19 +429,12 @@ class LightCurveCleaner:
         chi_square_cut: float = 10.0,
         chi_square_cut_flag: int = 0x2,
         controls_cut_flag=0x400000,
-    ) -> tuple[Transient, BinnedTransient]:
+    ) -> tuple[Transient, BinnedTransient, CutHistory]:
         """
         Run the default cleaning pipeline on a transient.
 
-        Parameters
-        ----------
-        transient : Transient
-            The transient to clean.
-
-        Returns
-        -------
-        tuple
-            The cleaned transient and the corresponding binned transient.
+        :param transient: The transient to clean.
+        :returns: Tuple(transient, binned_transient, cut_history)
         """
         transient = self.apply_UncertaintyCut(
             transient, flag=uncertainty_cut_flag, max_value=uncertainty_cut
