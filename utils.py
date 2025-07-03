@@ -348,29 +348,24 @@ class ColumnNames:
         for key, name in coldict.items():
             self.add(key, name, is_required=is_required)
 
-    def update(self, key: str, name: str, is_required: bool = False):
+    def update(self, key: str, name: str):
         """
         Update an existing column name mapping.
 
         :param key: Internal key name.
         :param name: New column name.
-        :param is_required: Whether the column is required.
         :raises RuntimeError: If the key does not exist.
         """
-        if is_required:
-            if key not in self._required_colnames:
-                raise RuntimeError(
-                    f"Cannot update non-existing required column name {key} with '{name}'"
-                )
+        if key in self._required_colnames:
             self._required_colnames[key] = name
-        else:
-            if key not in self._optional_colnames:
-                raise RuntimeError(
-                    f"Cannot update non-existing optional column name '{key}' with '{name}'"
-                )
+        elif key in self._optional_colnames:
             self._optional_colnames[key] = name
+        else:
+            raise RuntimeError(
+                f"Cannot update non-existing column key '{key}' with name '{name}'"
+            )
 
-    def update_many(self, coldict: Dict[str, str], is_required: bool = False):
+    def update_many(self, coldict: Dict[str, str]):
         """
         Update multiple column name mappings.
 
@@ -378,7 +373,7 @@ class ColumnNames:
         :param is_required: Whether these columns are required.
         """
         for key, name in coldict.items():
-            self.update(key, name, is_required=is_required)
+            self.update(key, name)
 
     def remove(self, key: str):
         """
@@ -427,12 +422,8 @@ class ColumnNames:
         raise AttributeError(f"{name} not found in column names")
 
     def __str__(self) -> str:
-        skip_colnames = ["mjdbin", "fdf", "mask"]
-
         lines = ["-- Required Columns --"]
         for k, v in self._required_colnames.items():
-            if k in skip_colnames:
-                continue
             lines.append(f"{k}: {v}")
 
         lines.append("-- Optional Columns --")
