@@ -557,7 +557,7 @@ class pdastroclass:
         # get the column names over which to iterate
         colnames = self.getcolnames(colnames)
         for colname in colnames:
-            (keep,) = np.where(self.t.loc[indices, colname].eq(val))
+            keep = np.where(self.t.loc[indices, colname] == val)[0]
             indices = indices[keep]
 
         return indices

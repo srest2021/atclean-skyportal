@@ -94,21 +94,33 @@ class BaseLightCurve(pdastrostatsclass):
         # calculate SNR
         self.calculate_snr_col()
 
-    def _get_postprocess_cols_dict(self):
+    def _get_postprocess_colnames(self):
         """
-        Return a dictionary mapping current column names to SkyPortal-compatible names.
+        Returns two dictionaries mapping current column names to SkyPortal-compatible names.
+        The first uses internal keys, while the second uses actual (external) keys, i.e., the actual current column names.
         """
-        return {
-            self.colnames.mjd: "mjd",
-            self.colnames.ra: "ra",
-            self.colnames.dec: "dec",
-            self.colnames.mag: "mag",
-            self.colnames.dmag: "magerr",
-            self.colnames.flux: "flux",
-            self.colnames.dflux: "dflux",
-            self.colnames.limiting_mag: "limiting_mag",
-            self.colnames.filter: "filter",
+        internal_mapping = {
+            "mjd": "mjd",
+            "ra": "ra",
+            "dec": "dec",
+            "mag": "mag",
+            "dmag": "magerr",
+            "flux": "flux",
+            "dflux": "dflux",
+            "limiting_mag": "limiting_mag",
+            "filter": "filter",
         }
+        filtered_internal_mapping = {
+            k: v for k, v in internal_mapping.items() if self.colnames.has(k)
+        }
+
+        filtered_external_mapping = {}
+        for key in filtered_internal_mapping:
+            filtered_external_mapping[self.colnames.__getattr__(key)] = (
+                filtered_internal_mapping[key]
+            )
+
+        return filtered_internal_mapping, filtered_external_mapping
 
     def postprocess(self):
         """
@@ -117,13 +129,13 @@ class BaseLightCurve(pdastrostatsclass):
         and adds optional columns for SkyPortal compatibility.
         """
         # convert column names
-        update_cols_dict = self._get_postprocess_cols_dict()
-        desired_cols = set(update_cols_dict.values())
+        internal_mapping, external_mapping = self._get_postprocess_colnames()
+        desired_cols = set(external_mapping.values())
         self.t.rename(
-            columns=update_cols_dict,
+            columns=external_mapping,
             inplace=True,
         )
-        self.colnames.update_many(update_cols_dict)
+        self.colnames.update_many(internal_mapping)
         if not desired_cols.issubset(set(self.t.columns)):
             raise ValueError("Missing expected column")
 
@@ -741,6 +753,9 @@ class LightCurve(BaseLightCurve):
         :param flux2mag_sigmalimit: Sigma threshold for converting flux to mag in final binned LC.
         :return: A new BinnedLightCurve object.
         """
+        if self.filt is None:
+            raise RuntimeError("Cannot bin a light curve with multiple filters")
+
         binned_lc = BinnedLightCurve(
             self.control_index,
             self.coords,
@@ -870,6 +885,8 @@ class LightCurve(BaseLightCurve):
                         flag, indices=[cur_index], remove_old=False
                     )
 
+        binned_lc.t[self.colnames.filter] = self.filt
+
         binned_lc.flux2mag(
             binned_lc.colnames.flux,
             binned_lc.colnames.dflux,
@@ -878,6 +895,7 @@ class LightCurve(BaseLightCurve):
             zpt=23.9,
             upperlim_Nsigma=flux2mag_sigmalimit,
         )
+
         if "__tmp_SN" in binned_lc.t.columns:
             binned_lc.t.drop(columns=["__tmp_SN"], inplace=True)
 
@@ -919,19 +937,20 @@ class BinnedLightCurve(BaseLightCurve):
     @property
     def default_mjd_colname(self):
         """
-        Return the default MJD column name for binne light curves
+        Return the default MJD column name for binned light curves
         (i.e., the middle of the bin, not the mean mjd for the bin).
         """
         return self.colnames.mjdbin
 
-    def _get_postprocess_cols_dict(self):
+    def _get_postprocess_colnames(self):
         """
         Return a dictionary mapping current column names to SkyPortal-compatible names,
         including the MJD bin column.
         """
-        cols_dict = super()._get_postprocess_cols_dict()
-        cols_dict[self.colnames.mjdbin] = "mjd_bin"
-        return cols_dict
+        internal_mapping, external_mapping = super()._get_postprocess_colnames()
+        internal_mapping["mjdbin"] = "mjd_bin"
+        external_mapping[self.colnames.mjdbin] = "mjd_bin"
+        return internal_mapping, external_mapping
 
     def get_percent_flagged(self, flag: Optional[int] = None) -> float:
         """
@@ -1153,13 +1172,14 @@ class BaseTransient:
 
         for i in all_indices:
             if i in self.lcs and i in other.lcs:
-                new_transient.add(self.get(i).merge(other.get(i)))
+                new_lc = self.get(i).merge(other.get(i))
             elif i in self.lcs:
-                self.get(i).filt = None
-                new_transient.add(self.get(i))
+                new_lc = deepcopy(self.get(i))
             else:
-                other.get(i).filt = None
-                new_transient.add(other.get(i))
+                new_lc = deepcopy(other.get(i))
+
+            new_lc.filt = merged_filt
+            new_transient.add(new_lc)
 
         return new_transient
 
@@ -1522,10 +1542,10 @@ class BinnedTransient(BaseTransient):
     def get(self, control_index: int) -> BinnedLightCurve:
         return super().get(control_index)
 
-    def new(self, filt: Optional[str] = None):
+    def new(self, filt: str | None):
         return BinnedTransient(
             self.mjd_bin_size,
-            filt=self.filt if filt is None else filt,
+            filt=filt,
             verbose=self.logger.verbose,
         )
 
