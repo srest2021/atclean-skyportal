@@ -109,6 +109,7 @@ class BaseLightCurve(pdastrostatsclass):
             "dflux": "dflux",
             "limiting_mag": "limiting_mag",
             "filter": "filter",
+            "mask": "mask",
         }
         filtered_internal_mapping = {
             k: v for k, v in internal_mapping.items() if self.colnames.has(k)
@@ -201,7 +202,7 @@ class BaseLightCurve(pdastrostatsclass):
         bad_ix = self.get_bad_indices(flag=flag)
         return 100 * len(bad_ix) / len(self.t)
 
-    def get_good_indices(self, flag: Optional[int] = None) -> List[int]:
+    def get_good_indices(self, flag: Optional[int] = None, indices=None) -> List[int]:
         """
         Return the list of indices corresponding to "good" (unmasked) rows.
         A row is considered "good" if its value in the mask column does not contain
@@ -211,15 +212,15 @@ class BaseLightCurve(pdastrostatsclass):
             return []
 
         if not self.colnames.mask in self.t.columns:
-            return self.getindices()
+            raise RuntimeError("No mask column found in light curve")
 
         if flag == 0:
             flag = None
 
         # note: if flag is None, this will just return all unmasked indices
-        return self.ix_unmasked(self.colnames.mask, maskval=flag)
+        return self.ix_unmasked(self.colnames.mask, maskval=flag, indices=indices)
 
-    def get_bad_indices(self, flag: Optional[int] = None) -> List[int]:
+    def get_bad_indices(self, flag: Optional[int] = None, indices=None) -> List[int]:
         """
         Return the list of indices corresponding to "bad" (masked) rows.
         A row is considered "bad" if its value in the mask column contains
@@ -229,13 +230,13 @@ class BaseLightCurve(pdastrostatsclass):
             return []
 
         if not self.colnames.mask in self.t.columns:
-            return self.getindices()
+            raise RuntimeError("No mask column found in light curve")
 
         if flag == 0:
             flag = None
 
         # note: if flag is None, this will just return all masked indices
-        return self.ix_masked(self.colnames.mask, maskval=flag)
+        return self.ix_masked(self.colnames.mask, maskval=flag, indices=indices)
 
     def remove_flag(self, flag: int, indices: Optional[List[int]] = None):
         """

@@ -1002,7 +1002,8 @@ class SigmaClipper:
 
 class PrimaryFlag:
     """
-    Represents a primary bitmask flag used to describe a cut condition.
+    Represents a primary bitmask flag used to denote
+    a "bad" measurement associated with a cut.
     """
 
     def __init__(
@@ -1040,6 +1041,8 @@ class PrimaryFlag:
 class Flag(PrimaryFlag):
     """
     Represents a secondary bitmask flag associated with a cut.
+    These can be used to provide additional metadata
+    or denote "questionable" (but not "bad") conditions.
     """
 
     def __init__(self, name: str, value: int, description: Optional[str] = None):
@@ -1179,6 +1182,13 @@ class CutHistory:
         """
         return list(self._cuts.values())
 
+    @property
+    def cut_names(self):
+        """
+        Return ordered list of applied cut names.
+        """
+        return list(self._cuts.keys())
+
     def add(self, cut: Cut):
         """
         Add a cut to the history.
@@ -1196,12 +1206,68 @@ class CutHistory:
         else:
             self.logger.warning(f"Cannot remove nonexistent cut '{name}'")
 
-    def get_primary_flags(self):
+    def get_primary_flags(self) -> int:
+        """
+        Get the combined integer value of all primary flags across cuts.
+        """
         res = 0
         for cut in self._cuts.values():
             if cut.primary_flag is not None:
                 res |= cut.primary_flag.value
         return res
+
+    def get_secondary_flags(self) -> int:
+        """
+        Get the combined integer value of all secondary flags across cuts.
+        """
+        res = 0
+        for cut in self._cuts.values():
+            for flag in cut._secondary_flags.values():
+                res |= flag.value
+        return res
+
+    def get_primary_flag(self, cut_name: str) -> Optional[PrimaryFlag]:
+        """
+        Get the primary flag for a cut by name if it exists.
+
+        :param name: Name of the cut.
+        :return: PrimaryFlag if it exists, otherwise None.
+        """
+        if cut_name in self._cuts and self._cuts[cut_name].primary_flag is not None:
+            return self._cuts[cut_name].primary_flag
+        return None
+
+    def get_UncertaintyCut_flag(self) -> Optional[PrimaryFlag]:
+        """
+        Get the primary flag for the uncertainty cut if it exists.
+
+        :return: PrimaryFlag for high uncertainty cut or None if not found.
+        """
+        return self.get_primary_flag("Uncertainty Cut")
+
+    def get_ChiSquareCut_flag(self) -> Optional[PrimaryFlag]:
+        """
+        Get the primary flag for the chi-square cut if it exists.
+
+        :return: PrimaryFlag for high PSF chi-square cut or None if not found.
+        """
+        return self.get_primary_flag("PSF Chi-Square Cut")
+
+    def get_ControlLightCurveCut_flag(self) -> Optional[PrimaryFlag]:
+        """
+        Get the primary flag for the control light curve cut if it exists.
+
+        :return: PrimaryFlag for control light curve cut or None if not found.
+        """
+        return self.get_primary_flag("Control Light Curve Cut")
+
+    def get_BadDayCut_flag(self) -> Optional[PrimaryFlag]:
+        """
+        Get the primary flag for the bad day cut / binning if it exists.
+
+        :return: PrimaryFlag for bad day cut or None if not found.
+        """
+        return self.get_primary_flag("Bad Day Cut (Binning)")
 
     def add_UncertaintyCut(
         self,
