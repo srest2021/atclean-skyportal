@@ -19,17 +19,8 @@ import pandas as pd
 from copy import deepcopy
 from pathlib import Path
 
+from constants import C4_SMALL_N
 from pdastro import AnotB, not_AandB
-
-C4_SMALL_N = [
-    0.0,
-    0.0,
-    0.7978845608028654,
-    0.8862269254527579,
-    0.9213177319235613,
-    0.9399856029866251,
-    0.9515328619481445,
-]
 
 
 class CustomLogger:
