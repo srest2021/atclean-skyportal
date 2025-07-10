@@ -73,6 +73,7 @@ class BaseLightCurve(pdastrostatsclass):
                 self.t = pd.DataFrame(columns=t.columns)
             else:
                 self.t = t.iloc[indices].copy(deep=deep)
+                self.t.reset_index(inplace=True, drop=True)
         else:
             self.t = t.copy(deep=deep)
 
