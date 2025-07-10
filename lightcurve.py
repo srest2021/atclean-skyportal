@@ -17,6 +17,7 @@ from utils import (
     SigmaClipper,
     StatParams,
     combine_flags,
+    nan_if_none,
 )
 
 
@@ -610,35 +611,35 @@ class LightCurve(BaseLightCurve):
         # recalculate SNR
         self.calculate_snr_col()
 
-    def update_statparams(
-        self,
-        statparams: StatParams,
-        index: Optional[int] = None,
-        prefix="controls_",
-    ):
-        """
-        Update the light curve table with values from a StatParams object.
+    # def update_statparams(
+    #     self,
+    #     statparams: StatParams,
+    #     index: Optional[int] = None,
+    #     prefix="controls_",
+    # ):
+    #     """
+    #     Update the light curve table with values from a StatParams object.
 
-        :param statparams: StatParams instance to pull data from.
-        :param index: Row index to update. If None, defaults to last row.
-        :param prefix: Column prefix to use for inserted columns.
-        """
-        if index < 0 or index >= len(self.t):
-            raise IndexError(
-                f"Index {index} out of range for DataFrame of length {len(self.t)}"
-            )
+    #     :param statparams: StatParams instance to pull data from.
+    #     :param index: Row index to update. If None, defaults to last row.
+    #     :param prefix: Column prefix to use for inserted columns.
+    #     """
+    #     if index < 0 or index >= len(self.t):
+    #         raise IndexError(
+    #             f"Index {index} out of range for DataFrame of length {len(self.t)}"
+    #         )
 
-        row = statparams.get_row(prefix=prefix, skip=["ix_good", "ix_clip"])
+    #     row = statparams.get_row(prefix=prefix, skip=["ix_good", "ix_clip"])
 
-        # add missing columns
-        for col in row:
-            if col not in self.t.columns:
-                self.t[col] = np.nan
+    #     # add missing columns
+    #     for col in row:
+    #         if col not in self.t.columns:
+    #             self.t.at[index, col] = val
 
-        if index is None:
-            index = len(self.t) - 1
-        for col, val in row.items():
-            self.t.at[index, col] = val
+    #     if index is None:
+    #         index = len(self.t) - 1
+    #     for col, val in row.items():
+    #         self.t.at[index, col] = val
 
     def flag_by_control_stats(
         self,
@@ -1384,7 +1385,7 @@ class Transient(BaseTransient):
         duJy = np.full((self.num_controls, len_mjd), np.nan)
         Mask = np.full((self.num_controls, len_mjd), 0, dtype=np.int32)
 
-        i = 1
+        i = 0
         for control_index in self.control_lc_indices:
             if len(self.get(control_index).t) != len_mjd or not np.array_equal(
                 self.get_sn().t[self.default_mjd_colname],
@@ -1394,12 +1395,12 @@ class Transient(BaseTransient):
                     f"SN light curve not equal to control light curve #{control_index}! Rerun or debug preprocessing."
                 )
             else:
-                uJy[i - 1, :] = self.get(control_index).t[self.colnames.flux]
-                duJy[i - 1, :] = self.get(control_index).t[self.colnames.dflux]
-                Mask[i - 1, :] = self.get(control_index).t[self.colnames.mask]
-
+                uJy[i, :] = self.get(control_index).t[self.colnames.flux]
+                duJy[i, :] = self.get(control_index).t[self.colnames.dflux]
+                Mask[i, :] = self.get(control_index).t[self.colnames.mask]
             i += 1
 
+        stat_rows = []
         sigma_clipper = SigmaClipper(verbose=False)
         for index in range(uJy.shape[-1]):
             sigma_clipper.calcaverage_sigmacutloop(
@@ -1410,9 +1411,15 @@ class Transient(BaseTransient):
                 Nsigma=3.0,
                 median_firstiteration=True,
             )
-            self.get_sn().update_statparams(
-                sigma_clipper.statparams, index=index, prefix=prefix
+            stat_rows.append(
+                sigma_clipper.statparams.get_row(
+                    prefix=prefix, skip=["ix_good", "ix_clip"]
+                )
             )
+
+        # update each column with the calculated StatParams
+        for key in stat_rows[0]:
+            self.get_sn().t[key] = [nan_if_none(row[key]) for row in stat_rows]
 
         self.get_sn().t[f"{prefix}abs_stn"] = (
             self.get_sn().t[f"{prefix}mean"] / self.get_sn().t[f"{prefix}mean_err"]

@@ -252,6 +252,13 @@ class LightCurveCleaner:
         :return: Updated transient with true uncertainties in dflux column and the `sigma_extra` we added stored in a new column `dflux_offset_in_quadrature`.
         """
         self.logger.info(f"\nApplying true uncertainties estimation")
+
+        if (
+            transient.colnames.has("dflux_offset")
+            and transient.colnames.dflux_offset in transient.get_sn().t.columns
+        ):
+            transient.remove_noise_from_dflux()
+
         stats_table = transient.get_uncert_est_stats(
             temp_x2_max_value=temp_x2_max_value,
             uncertainty_cut_flag=uncertainty_cut_flag,

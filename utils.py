@@ -86,6 +86,16 @@ def hexstring_to_int(hexstring: str):
     return int(hexstring, 16)
 
 
+def nan_if_none(value: Any) -> Any:
+    """
+    Convert None to np.nan, otherwise return the value unchanged.
+
+    :param value: Input value.
+    :return: np.nan if value is None, else the original value.
+    """
+    return np.nan if value is None else value
+
+
 def combine_flags(flags: List[int]) -> int:
     """
     Bitwise OR a list of integer flags into a single integer.

@@ -80,9 +80,9 @@ def query_atlas(
                 raise RuntimeError(
                     f"Error querying ATLAS API: {resp.status_code} {resp.text}"
                 )
-                # logger.error(f"{resp.status_code}")
-                # logger.info(resp.text)
-                # sys.exit()
+                # waittime = 10
+                # logger.info(f"Waiting {waittime} seconds")
+                # time.sleep(waittime)
 
     result_url = None
     taskstarted_printed = False
@@ -104,10 +104,11 @@ def query_atlas(
                             f"Task is running (started at {resp.json()['starttimestamp']})"
                         )
                         taskstarted_printed = True
-                    time.sleep(2)
                 else:
-                    # print(f"Waiting for job to start (queued at {resp.json()['timestamp']})")
-                    time.sleep(4)
+                    print(
+                        f"Waiting for job to start (queued at {resp.json()['timestamp']})"
+                    )
+                time.sleep(10)
             else:
                 logger.error(f"{resp.status_code}")
                 logger.info(resp.text)
@@ -424,7 +425,7 @@ class AtlasLightCurveDownloader:
                 )
                 return result
             except Exception as e:
-                self.logger.warning("Exception caught: " + str(e))
+                self.logger.warning(str(e))
                 self.logger.info("Trying again in 20 seconds! Waiting...")
                 time.sleep(20)
                 continue
