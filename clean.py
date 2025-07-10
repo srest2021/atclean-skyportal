@@ -486,6 +486,13 @@ class LightCurveCleaner:
         Run the default cleaning pipeline on a transient.
 
         :param transient: The transient to clean.
+        :param uncertainty_cut: Maximum allowed uncertainty.
+        :param uncertainty_cut_flag: Bitmask flag to apply for uncertainty cut.
+        :param chi_square_cut: Maximum allowed PSF chi-square value.
+        :param chi_square_cut_flag: Bitmask flag to apply for chi-square cut.
+        :param controls_cut_flag: Bitmask flag to apply for bad epochs in control light curve cut.
+        :param bad_day_cut_flag: Bitmask flag to apply for bad days in bad day cut / binning.
+        :param mjd_bin_size: Size of MJD bins for bad day cut.
         :returns: Tuple(transient, binned_transient, cut_history)
         """
         self.reset()
