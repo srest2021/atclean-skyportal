@@ -1,19 +1,17 @@
 #!/usr/bin/env python
 
-from dataclasses import dataclass
 import io
 import re
 import time
-from typing import Dict, List, Optional, Type
-import os, sys, requests, argparse, configparser, math
+from typing import Dict, Optional
+import os, sys, requests, math
 import pandas as pd
 import numpy as np
-from getpass import getpass
 from astropy import units as u
-from astropy.coordinates import Angle, SkyCoord
+from astropy.coordinates import Angle
 from astropy.time import Time
 
-from constants import CTRL_COORDINATES_TABLE_COLNAMES, ATLAS_API_COLNAMES
+from constants import ATLAS_API_COLNAMES
 from lightcurve import LightCurve, Transient
 from utils import Coordinates, CustomLogger, new_row
 

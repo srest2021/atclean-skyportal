@@ -1,13 +1,11 @@
 #!/usr/bin/env python
 
 from copy import deepcopy
-import sys
 from typing import Dict, List, Optional, Self
-from astropy.nddata import bitmask
 
 import numpy as np
 import pandas as pd
-from pdastro import AandB, AnotB, AorB, not_AandB, pdastrostatsclass
+from pdastro import AandB, AnotB, AorB, pdastrostatsclass
 from utils import (
     BinnedColumnNames,
     CleanedColumnNames,
